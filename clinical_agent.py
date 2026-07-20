@@ -5,7 +5,7 @@ from rag_retriever import RAGRetriever
 from llm_interface import LLMInterface
 
 class ClinicalOrchestratorAgent:
-    def __init__(self, index_path, docs_mapping_path, model_name='nikitaredy/medictron-7B'):
+    def __init__(self, index_path, docs_mapping_path, model_name):
         self.retriever = RAGRetriever(index_path, docs_mapping_path)
         self.retriever.load()
         self.llm = LLMInterface(model_name=model_name)
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     PROCESSED_DIR = "/Users/unasumankumarpatro/Documents/Diabetes/processed_data"
     INDEX_PATH = os.path.join(PROCESSED_DIR, 'medical_kb.index')
     DOCS_PATH = os.path.join(PROCESSED_DIR, 'medical_kb_docs.npy')
-    MODEL_NAME = 'nikitaredy/medictron-7B'
+    MODEL_NAME = 'medictron-7b'
 
     # Initialize Agent
     agent = ClinicalOrchestratorAgent(INDEX_PATH, DOCS_PATH, model_name=MODEL_NAME)
