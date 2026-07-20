@@ -1,4 +1,4 @@
-# Clinical Decision Support Agent for Diabetes
+# Clinical Decision Support Agent for Diabetes.
 
 This repository contains a complete pipeline for a Clinical Decision Support Agent. The system is designed to take unstructured, multilingual (Hinglish) clinical notes, retrieve relevant medical context using RAG (Retrieage-Augmented Generation), and extract structured clinical features into a machine-readable JSON format.
 
