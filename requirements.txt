@@ -1,0 +1,13 @@
+torch
+transformers
+sentencepiece
+sentence-transformers
+faiss-cpu
+numpy
+pandas
+ollama
+scikit-learn
+xgboost
+peft
+accelerate
+huggingface_hub
