@@ -1,52 +1,73 @@
-import ollama
+from loguru import logger
 import json
+import re
+from typing import Any, Dict, Optional
+from llm_providers import LLMProvider, OllamaProvider
 
 class LLMInterface:
-    def __init__(self, model_name='medictron-7b'):
-        self.model_name = model_name
-        print(f"[LLM] Initialized with Ollama model: {self.model_name}")
+    """
+    A wrapper around LLM providers to provide a consistent interface.
+    """
+    def __init__(self, provider: LLMProvider):
+        self.provider = provider
+        logger.info(f"[LLMInterface] Initialized with provider: {type(self.provider).__name__}")
 
-    def generate_structured_json(self, prompt, schema):
+    def generate_structured_json(self, prompt: str, schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Uses the Ollama service to generate text and attempts to extract JSON.
+        Delegates the JSON generation to the underlying provider and performs robust extraction.
         """
-        system_prompt = (
-            "You are a clinical information extraction specialist. "
-            "Your task is to extract specific clinical features from the provided text. "
-            f"You must respond ONLY with a valid JSON object that follows this schema: {json.dumps(schema)}. "
-            "Do not include any conversational text or markdown formatting."
-        )
-
-        full_prompt = f"System: {system_prompt}\n\nUser: {prompt}\n\nJSON Output:"
-
         try:
-            response = ollama.generate(
-                model=self.model_name,
-                prompt=full_prompt,
-                format='json'
-            )
+            raw_response = self.provider.generate_structured_json(prompt, schema)
+            if not raw_response:
+                return None
+
+            # If the provider returned a string instead of a dict, try to parse it
+            if isinstance(raw_response, str):
+                return self._parse_json_payload(raw_response)
             
-            content = response['response']
+            return raw_response
+        except Exception as e:
+            logger.error(f"[LLMInterface] Error during JSON generation: {e}")
+            return None
+
+    def _parse_json_payload(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Uses regex to find and parse the first JSON object in a string.
+        Handles potential markdown code blocks.
+        """
+        try:
+            # Debug: print the text that we are trying to parse
+            logger.debug(f"[LLMInterface] Attempting to parse text: {text[:500]}...")
             
-            # Extract JSON from the response (in case the model includes the prompt)
-            json_start = content.find('{')
-            json_end = content.rfind('}') + 1
-            if json_start != -1 and json_end != -1:
-                json_str = content[json_start:json_end]
+            # Remove markdown code block markers if present
+            text = re.sub(r'```json\s*|```', '', text).strip()
+            
+            # Regex to find content between the first '{' and the last '}'
+            match = re.search(r'(\{.*\})', text, re.DOTALL)
+            if match:
+                json_str = match.group(1)
                 return json.loads(json_str)
             else:
-                print(f"[LLM Error] No JSON found in response: {content}")
+                logger.error(f"[LLMInterface] No JSON object found in response text: {text[:100]}...")
                 return None
+        except json.JSONDecodeError as e:
+            logger.error(f"[LLMInterface] JSON decode error: {e}")
+            return None
         except Exception as e:
-            print(f"[LLM Error] Failed to generate JSON via Ollama: {e}")
+            logger.error(f"[LLMInterface] Failed to parse JSON from text: {e}")
             return None
 
 if __name__ == "__main__":
-    # Quick test
-    interface = LLMInterface()
-    test_prompt = "Patient age 25, symptoms: fever and headache."
-    test_schema = {"age": "int", "symptoms": "list"}
-    
-    print("Testing Ollama LLM Interface...")
-    result = interface.generate_structured_json(test_prompt, test_schema)
-    print(f"Result: {result}")
+    # Quick test with Ollama
+    try:
+        ollama_provider = OllamaProvider()
+        interface = LLMInterface(provider=ollama_provider)
+        
+        test_prompt = "Patient age 25, symptoms: fever and headache."
+        test_schema = {"age": "int", "symptoms": "list"}
+        
+        logger.info("Testing Ollama LLM Interface...")
+        result = interface.generate_structured_json(test_prompt, test_schema)
+        logger.info(f"Result: {result}")
+    except Exception as e:
+        logger.error(f"Test failed: {e}")
