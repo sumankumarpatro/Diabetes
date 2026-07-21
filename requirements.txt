@@ -8,6 +8,10 @@ pandas
 ollama
 scikit-learn
 xgboost
+loguru
+tenacity
+pydantic
+pydantic-settings
 peft
 accelerate
 huggingface_hub

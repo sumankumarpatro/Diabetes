@@ -1,9 +1,11 @@
+from loguru import logger
 import pandas as pd
 import numpy as np
 import random
 import os
+from config import config
 
-def generate_hinglish_note(row):
+def generate_hinglish_note(row: pd.Series) -> str:
     """
     Generates a synthetic, multilingual (Hinglish) clinical note from a row of diabetes data.
     """
@@ -39,26 +41,24 @@ def generate_hinglish_note(row):
     return random.choice(templates)
 
 def main():
-    PROCESSED_DIR = "/Users/unasumankumarpatro/Documents/Diabetes/processed_data"
-    INPUT_PATH = os.path.join(PROCESSED_DIR, 'train.csv')
-    OUTPUT_PATH = os.path.join(PROCESSED_DIR, 'train_with_notes.csv')
+    INPUT_PATH = config.TRAIN_DATA_PATH
+    OUTPUT_PATH = config.OUTPUT_DATA_PATH
 
-    if not os.path.exists(INPUT_PATH):
-        print(f"Error: {INPUT_PATH} not found.")
+    if not INPUT_PATH.exists():
+        logger.error(f"Input data not found: {INPUT_PATH}")
         return
 
-    print(f"Loading training data from: {INPUT_PATH}")
+    logger.info(f"Loading training data from: {INPUT_PATH}")
     df = pd.read_csv(INPUT_PATH)
 
-    print("Generating Hinglish clinical notes...")
+    logger.info("Generating Hinglish clinical notes...")
     # Apply the generation function to each row
     df['clinical_note'] = df.apply(generate_hinglish_note, axis=1)
 
     # Save the new dataset
     df.to_csv(OUTPUT_PATH, index=False)
-    print(f"Successfully generated notes and saved to: {OUTPUT_PATH}")
-    print(f"Sample note:\n{df['clinical_note'].iloc[0]}")
-    print(f"\nSample note 2:\n{df['clinical_note'].iloc[10]}")
+    logger.success(f"Successfully generated notes and saved to: {OUTPUT_PATH}")
+    logger.info(f"Sample note:\n{df['clinical_note'].iloc[0]}")
 
 if __name__ == "__main__":
     main()
