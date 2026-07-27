@@ -56,18 +56,3 @@ class LLMInterface:
         except Exception as e:
             logger.error(f"[LLMInterface] Failed to parse JSON from text: {e}")
             return None
-
-if __name__ == "__main__":
-    # Quick test with Ollama
-    try:
-        ollama_provider = OllamaProvider()
-        interface = LLMInterface(provider=ollama_provider)
-        
-        test_prompt = "Patient age 25, symptoms: fever and headache."
-        test_schema = {"age": "int", "symptoms": "list"}
-        
-        logger.info("Testing Ollama LLM Interface...")
-        result = interface.generate_structured_json(test_prompt, test_schema)
-        logger.info(f"Result: {result}")
-    except Exception as e:
-        logger.error(f"Test failed: {e}")

@@ -1,3 +1,5 @@
+import argparse
+import sys
 from llm_providers import OllamaProvider
 from loguru import logger
 import json
@@ -32,18 +34,18 @@ class ClinicalOrchestratorAgent:
         """
         self.retriever = retriever
         self.llm = llm
-        # Use a simplified schema for the prompt to avoid truncation and confusion
+        # IMPROVED: More descriptive schema to guide the LLM and prevent hallucinations
         self.extraction_schema = {
-            "age_group": "string",
-            "symptoms": "list of strings",
-            "medications": "list of strings",
-            "hospital_stay_days": "integer",
-            "glucose_status": "string"
+            "age_group": "The patient's age as a number, range (e.g., '30-40'), or group (e.g., 'adult'). If not found, use 'Unknown'.",
+            "symptoms": "A list of symptoms explicitly mentioned in the text. If none are mentioned, return an empty list [].",
+            "medications": "A list of medications explicitly mentioned in the text. If none are mentioned, return an empty list [].",
+            "hospital_stay_days": "The number of days spent in the hospital as an integer. If not mentioned, use null.",
+            "glucose_status": "The glucose status extracted from text (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Normal', 'Unknown')."
         }
         self.recommendation_schema = {
-            "actionable_steps": "list of strings",
-            "urgency_level": "string (Low, Medium, High)",
-            "clinical_rationale": "string"
+            "actionable_steps": "A list of human-readable, professional medical instructions (e.g., 'Monitor blood glucose levels daily').",
+            "urgency_level": "A single word: 'Low', 'Medium', or 'High'.",
+            "clinical_rationale": "A brief, professional explanation for the recommendations based on the clinical data."
         }
 
     def orchestrate(self, clinical_note: str, readmission_prediction: bool) -> Optional[ClinicalDecisionReport]:
@@ -94,7 +96,13 @@ class ClinicalOrchestratorAgent:
         """
         Uses the LLMInterface to extract structured features from the augmented text.
         """
-        prompt = f"Extract clinical features from the following text:\n\n{text}"
+        # IMPROVED: Added strict extraction instructions to prevent hallucination
+        prompt = (
+            "You are a medical data extraction assistant. Your task is to extract information "
+            "STRICTLY from the provided text. Do not infer symptoms or medications that are not "
+            "explicitly stated. If a piece of information is missing, follow the schema instructions.\n\n"
+            f"Text to process:\n{text}"
+        )
         return self.llm.generate_structured_json(prompt, self.extraction_schema)
 
     def _generate_recommendations(self, features: ClinicalFeatures, prediction: bool, context: str) -> str:
@@ -109,8 +117,10 @@ class ClinicalOrchestratorAgent:
             f"Patient Features: {features.model_dump_json()}\n"
             f"Prediction Status: {risk_status}\n"
             f"Medical Context: {context}\n\n"
-            f"If the risk is HIGH, focus on urgent preventative interventions to avoid readmission. "
-            f"If the risk is LOW, focus on maintenance and long-term monitoring.\n"
+            f"Instructions:\n"
+            f"1. Use professional, natural language for all fields.\n"
+            f"2. If the risk is HIGH, focus on urgent preventative interventions to avoid readmission.\n"
+            f"3. If the risk is LOW, focus on maintenance and long-term monitoring.\n"
             f"Respond ONLY with a valid JSON object following this schema: {json.dumps(self.recommendation_schema)}."
         )
 
@@ -132,6 +142,28 @@ class ClinicalOrchestratorAgent:
             return "Error generating formatted recommendations."
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run Clinical Orchestrator Agent with custom input.")
+    parser.add_argument("--note", type=str, help="The clinical note to process.")
+    parser.add_argument("--high-risk", action="store_true", help="Set prediction to True (High Risk).")
+    parser.add_argument("--low-risk", action="store_true", help="Set prediction to False (Low Risk).")
+    args = parser.parse_args()
+
+    # If no arguments are provided, prompt the user for input
+    if args.note is None:
+        print("--- Clinical Agent Input Mode ---")
+        note = input("Enter the clinical note: ")
+        
+        # Determine risk status based on input or default to low risk if not specified
+        # We'll check if the user wants to specify high risk via a prompt
+        risk_input = input("Is this a high risk case? (y/n, default 'n'): ").strip().lower()
+        high_risk = risk_input == 'y'
+    else:
+        note = args.note
+        # If note is provided via CLI, we need to determine if it's high risk
+        # If --high-risk is not set, but --low-risk is, it's low risk.
+        # If neither is set, we'll default to low risk.
+        high_risk = args.high_risk
+
     # Dependency Injection Setup
     retriever = RAGRetriever()
     retriever.load()
@@ -141,14 +173,11 @@ if __name__ == "__main__":
     # Initialize Agent
     agent = ClinicalOrchestratorAgent(retriever=retriever, llm=llm_interface)
 
-    # Test with a sample Hinglish note and a simulated prediction
-    sample_note = "Patient age [0-10) presented with high sugar issues. Bukhar and weakness reported. Time in hospital: 4 days."
-    simulated_prediction = True # Simulate that XGBoost predicted a high risk
-
     logger.info("--- Starting Clinical Decision Support Process ---")
-    report = agent.orchestrate(sample_note, simulated_prediction)
-    
+    report = agent.orchestrate(note, high_risk)
+
     if report:
-        logger.info(f"Final Clinical Decision Report:\n{report.model_dump_json(indent=2)}")
+        print("\n--- FINAL CLINICAL DECISION REPORT ---")
+        print(report.model_dump_json(indent=2))
     else:
-        logger.error("No report obtained.")
+        logger.error("Failed to generate report.")
