@@ -43,7 +43,7 @@ class ClinicalOrchestratorAgent:
             "glucose_status": "The glucose status (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Normal', 'Unknown')."
         }
         self.recommendation_schema = {
-            "actionable_steps": "A list of human-readable, professional medical instructions (e.g., 'Monitor blood glucose levels daily').",
+            "actionable_steps": "A list of strings, where each string is a clear, professional medical instruction (e.g., 'Monitor blood glucose levels daily').",
             "urgency_level": "A single word: 'Low', 'Medium', or 'High'.",
             "clinical_rationale": "A brief, professional explanation for the recommendations based on the clinical data."
         }
@@ -53,6 +53,7 @@ class ClinicalOrchestratorAgent:
         Orchestrates the R/RAG and LLM pipeline to extract features, 
         incorporate prediction, and generate clinical recommendations.
         """
+        print(f"DEBUG: Orchestrate called with note: {clinical_note[:50]}...")
         logger.info(f"Received Clinical Note: {clinical_note[:100]}...")
         
         try:
@@ -97,15 +98,19 @@ class ClinicalOrchestratorAgent:
         """
         Uses the LLMInterface to extract structured features from the augmented text.
         """
-        # IMPROVED: Added explicit formatting rules to the prompt to prevent placeholder text
+        # IMPROVED: Added explicit formatting rules and strict constraints to prevent hallucinations
         prompt = (
             "You are a medical data extraction assistant. Your task is to extract information "
             "STRICTLY from the provided text. Do not infer symptoms or medications that are not "
             "explicitly stated. If a piece of information is missing, follow the schema instructions.\n\n"
+            "STRICT CONSTRAINTS:\n"
+            "1. NO INFERENCE: Do not assume any symptoms, medications, or age if not explicitly written.\n"
+            "2. NO PLACEHOLDERS: NEVER return the literal strings 'string', 'list of ' or 'integer'.\n"
+            "3. MISSING DATA: If a piece of information is missing, use 'Unknown', an empty list [], or null.\n"
+            "4. ACCURACY: Every extracted value must be traceable to the provided text.\n\n"
             "FORMATTING RULES:\n"
-            "1. NEVER return the literal strings 'string', 'list of strings', or 'integer'.\n"
-            "2. Replace these placeholders with the ACTUAL data found in the text.\n"
-            "3. If no data is found for a field, use 'Unknown', an empty list [], or null.\n\n"
+            "1. Replace all schema placeholders with ACTUAL data found in the text.\n"
+            "2. Ensure the output is a valid JSON object.\n\n"
             f"Text to process:\n{text}"
         )
         return self.llm.generate_structured_json(prompt, self.extraction_schema)
@@ -114,23 +119,41 @@ class ClinicalOrchestratorAgent:
         """
         The 'Reflector' step: A second LLM call to verify that the extracted data 
         is strictly present in the original note and contains no hallucinations.
+        Uses a Chain-of-Thought approach by requiring an 'audit_log' in the schema.
         """
+        # Define a schema for the auditor that includes an audit log for Chain-of-Thought
+        audit_schema = self.extraction_schema.copy()
+        audit_schema["audit_log"] = "A list of strings where you document your verification process for each field (e.g., 'Verified age: 30 is in text', 'Removed symptom: headache because it is not in text')."
+
         prompt = (
             "You are a strict medical auditor. Your ONLY job is to remove hallucinations.\n\n"
+            "AUDIT PROCESS:\n"
+            "1. Review the 'EXTRACTED DATA' field by field.\n"
+            "2. For each field, check if the value is explicitly stated in the 'ORIGINAL NOTE'.\n"
+            "3. If a value is NOT in the text, you MUST remove it from the JSON and note it in the 'audit_log'.\n"
+            "4. If a value IS in the text, you MUST confirm it in the 'audit_log'.\n\n"
             "AUDIT RULE:\n"
             "Compare the 'EXTRACTED DATA' against the 'ORIGINAL NOTE'. If a symptom, medication, "
             "or age is mentioned in the JSON but NOT in the text, you MUST remove it from the JSON.\n\n"
             f"ORIGINAL NOTE: {original_note}\n\n"
             f"EXTRACTED DATA: {json.dumps(extracted_data)}\n\n"
-            "IMPORTANT: Ensure the output follows the correct format (e.g., do not use 'string' or 'list of strings').\n"
-            "If the data is correct, return it exactly as is.\n\n"
-            "Respond ONLY with the corrected JSON object."
+            "IMPORTANT: Ensure the output follows the correct format. Do not use 'string' or 'list of strings'.\n"
+            "Respond ONLY with the corrected JSON object containing the updated data and your 'audit_log'."
         )
         
-        # We use the same extraction schema for the reflector to ensure structure consistency
         try:
-            corrected_data = self.llm.generate_structured_json(prompt, self.extraction_schema)
-            return corrected_data
+            audit_result = self.llm.generate_structured_json(prompt, audit_schema)
+            if not audit_result:
+                return None
+            
+            # Extract only the original fields from the audit result
+            cleaned_data = {key: audit_result[key] for key in self.extraction_schema if key in audit_result}
+            
+            # Log the audit process for debugging/visibility
+            if "audit_log" in audit_result:
+                logger.info(f"Reflector Audit Log: {' | '.join(audit_result['audit_log'])}")
+                
+            return cleaned_data
         except (ConnectionError, ValueError, RuntimeError) as e:
             logger.error(f"Reflector error: {e}")
             return None
@@ -151,6 +174,8 @@ class ClinicalOrchestratorAgent:
             f"1. Use professional, natural language for all fields.\n"
             f"2. If the risk is HIGH, focus on urgent preventative interventions to avoid readmission.\n"
             f"3. If the risk is LOW, focus on maintenance and long-term monitoring.\n"
+            f"4. IMPORTANT: If the patient is stable or low risk, include encouraging, generic health maintenance advice (e.g., 'Continue healthy lifestyle', 'Maintain regular checkups').\n"
+            f"5. NEVER return 'No recommendations could be generated' unless there is absolutely no data to work with.\n"
             f"Respond ONLY with a valid JSON object following this schema: {json.dumps(self.recommendation_schema)}."
         )
 
