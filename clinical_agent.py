@@ -34,13 +34,13 @@ class ClinicalOrchestratorAgent:
         """
         self.retriever = retriever
         self.llm = llm
-        # IMPROVED: More descriptive schema to guide the LLM and prevent hallucinations
+        # Reverted to simple types to avoid confusing the LLM with complex instructions in the schema
         self.extraction_schema = {
-            "age_group": "The patient's age as a number, range (e.g., '30-40'), or group (e.g., 'adult'). If not found, use 'Unknown'.",
-            "symptoms": "A list of symptoms explicitly mentioned in the text. If none are mentioned, return an empty list [].",
-            "medications": "A list of medications explicitly mentioned in the text. If none are mentioned, return an empty list [].",
-            "hospital_stay_days": "The number of days spent in the hospital as an integer. If not mentioned, use null.",
-            "glucose_status": "The glucose status extracted from text (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Normal', 'Unknown')."
+            "age_group": "The patient's age or age group (e.g., '30', '30-40', 'adult').",
+            "symptoms": "A list of strings representing symptoms.",
+            "medications": "A list of strings representing medications.",
+            "hospital_stay_days": "An integer or null.",
+            "glucose_status": "The glucose status (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Normal', 'Unknown')."
         }
         self.recommendation_schema = {
             "actionable_steps": "A list of human-readable, professional medical instructions (e.g., 'Monitor blood glucose levels daily').",
@@ -67,9 +67,17 @@ class ClinicalOrchestratorAgent:
             if not extracted_data:
                 logger.warning("Failed to extract features from note.")
                 return None
+            logger.info("Reflecting on extraction accuracy...")
+            validated_data = self._reflect_on_extraction(clinical_note, extracted_data)
+            
+            if not validated_data:
+                logger.warning("Reflector failed to validate extraction. Falling back to original data.")
+                validated_data = extracted_data
+            else:
+                logger.success("Reflector validated/corrected the extraction.")
 
             # Validate the extracted data using the Pydantic model
-            features = ClinicalFeatures(**extracted_data)
+            features = ClinicalFeatures(**validated_data)
             logger.info("Generating clinical recommendations based on prediction...")
             recommendations = self._generate_recommendations(features, readmission_prediction, context_text)
 
@@ -89,14 +97,43 @@ class ClinicalOrchestratorAgent:
         """
         Uses the LLMInterface to extract structured features from the augmented text.
         """
-        # IMPROVED: Added strict extraction instructions to prevent hallucination
+        # IMPROVED: Added explicit formatting rules to the prompt to prevent placeholder text
         prompt = (
             "You are a medical data extraction assistant. Your task is to extract information "
             "STRICTLY from the provided text. Do not infer symptoms or medications that are not "
             "explicitly stated. If a piece of information is missing, follow the schema instructions.\n\n"
+            "FORMATTING RULES:\n"
+            "1. NEVER return the literal strings 'string', 'list of strings', or 'integer'.\n"
+            "2. Replace these placeholders with the ACTUAL data found in the text.\n"
+            "3. If no data is found for a field, use 'Unknown', an empty list [], or null.\n\n"
             f"Text to process:\n{text}"
         )
         return self.llm.generate_structured_json(prompt, self.extraction_schema)
+
+    def _reflect_on_extraction(self, original_note: str, extracted_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        The 'Reflector' step: A second LLM call to verify that the extracted data 
+        is strictly present in the original note and contains no hallucinations.
+        """
+        prompt = (
+            "You are a strict medical auditor. Your ONLY job is to remove hallucinations.\n\n"
+            "AUDIT RULE:\n"
+            "Compare the 'EXTRACTED DATA' against the 'ORIGINAL NOTE'. If a symptom, medication, "
+            "or age is mentioned in the JSON but NOT in the text, you MUST remove it from the JSON.\n\n"
+            f"ORIGINAL NOTE: {original_note}\n\n"
+            f"EXTRACTED DATA: {json.dumps(extracted_data)}\n\n"
+            "IMPORTANT: Ensure the output follows the correct format (e.g., do not use 'string' or 'list of strings').\n"
+            "If the data is correct, return it exactly as is.\n\n"
+            "Respond ONLY with the corrected JSON object."
+        )
+        
+        # We use the same extraction schema for the reflector to ensure structure consistency
+        try:
+            corrected_data = self.llm.generate_structured_json(prompt, self.extraction_schema)
+            return corrected_data
+        except (ConnectionError, ValueError, RuntimeError) as e:
+            logger.error(f"Reflector error: {e}")
+            return None
 
     def _generate_recommendations(self, features: ClinicalFeatures, prediction: bool, context: str) -> str:
         """
