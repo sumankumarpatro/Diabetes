@@ -19,7 +19,7 @@ The project implements a RAG-based orchestration pipeline:
 *   **Language**: Python 3.9+
 *   **LLM Orchestration**: `transformers`, `torch`, `ollama`
 *   **Vector Database**: `FAISS`
-*   **Embeddings**: `sentence-transformers` (all-MiniLM-L6-v2)
+*   **Embeddings**: `sentence-transformers` (paraphrase-multilingual-MiniLM-L12-v2)
 *   **Machine Learning**: `XGBoost`, `scikit-learn`, `Optuna`, `imbalanced-learn`
 *   **Data Processing**: `pandas`, `numpy`
 
