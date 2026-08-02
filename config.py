@@ -18,7 +18,7 @@ class ProjectConfig(BaseSettings):
     # RAG Configuration
     INDEX_PATH: Path = Field(default=Path("processed_data/medical_kb.index"))
     DOCS_PATH: Path = Field(default=Path("processed_data/medical_kb_docs.npy"))
-    RETRIEVER_MODEL_NAME: str = "all-MiniLM-L6-v2"
+    RETRIEVER_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
     RETRIEVAL_K: int = 1
 
     # LLM Configuration
