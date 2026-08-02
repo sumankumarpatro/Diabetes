@@ -20,7 +20,7 @@ The project implements a RAG-based orchestration pipeline:
 *   **LLM Orchestration**: `transformers`, `torch`, `ollama`
 *   **Vector Database**: `FAISS`
 *   **Embeddings**: `sentence-transformers` (all-MiniLM-L6-v2)
-*   **Machine Learning**: `XGBoost`, `scikit-learn`
+*   **Machine Learning**: `XGBoost`, `scikit-learn`, `Optuna`, `imbalanced-learn`
 *   **Data Processing**: `pandas`, `numpy`
 
 ## 📋 Getting Started
@@ -69,7 +69,12 @@ python3 clinical_agent.py
 *   `processed_data/`: Contains the FAISS index, embeddings, and trained models.
 
 ## 🧬 Model Architecture
-The agent uses a **Retrieage-Augmented Generation (RAG)** architecture. By augmenting the unstructured clinical note with high-quality medical context, the LLM is significantly less prone to hallucinations and can accurately extract clinical entities even from noisy, multilingual input.
+The agent uses a **Retrieval-Augmented Generation (RAG)** architecture. By augmenting the unstructured clinical note with high-quality medical context, the LLM is significantly less prone to hallucinations and can accurately extract clinical entities even from noisy, multilingual input.
+
+The predictive component uses an **Optimized XGBoost Pipeline** featuring:
+* **Hyperparameter Tuning**: Automated optimization via `Optuna`.
+* **Class Imbalance Handling**: `SMOTENC` for synthetic oversampling of categorical features and `scale_pos_weight` for cost-sensitive learning.
+* **Native Categorical Support**: Leveraging XGBoost's internal handling of categorical data types.
 
 ## 🩺 Model Deployment Guide (Medictron-7B via Ollama)
 <!-- https://huggingface.co/nikitaredy/medictron-7B -->
