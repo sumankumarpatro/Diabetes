@@ -46,22 +46,61 @@ def preprocess_diabetes_data(data_path: str, output_dir: str) -> None:
         else:
             df[col] = df[col].fillna("Unknown")
 
-    # 4. Encode Target Variable: 'readmitted'
+    # 4. Advanced Feature Engineering
+    logger.info("Performing advanced feature engineering...")
+
+    # A. Medication Count: Sum up all the binary medication columns
+    med_cols = [
+        'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride',
+        'acetohexamide', 'glipizide', 'glyburide', 'tolbutamide', 'pioglitazone',
+        'rosiglitazone', 'acarbose', 'miglitol', 'troglitazone', 'tolazamide',
+        'examide', 'citoglipton', 'insulin', 'glyburide-metformin',
+        'glipizide-metformin', 'glime_pioglitazone', 'metformin-rosiglitazone',
+        'metformin-pioglitazone'
+    ]
+    # Filter to only those that actually exist in the dataframe
+    existing_med_cols = [c for c in med_cols if c in df.columns]
+    if existing_med_cols:
+        df['total_medications_count'] = df[existing_med_cols].sum(axis=1)
+        logger.info(f"Engineered 'total_medications_count' using {len(existing_med_cols)} columns.")
+
+    # B. Age Binning: Create clinically relevant age groups
+    if 'age' in df.columns:
+        # The 'age' column contains ranges like '[70-80)'. 
+        # We need to extract the lower bound to create numeric bins.
+        try:
+            # Extract the first number from the range string
+            df['age_numeric'] = df['age'].str.extract(r'(\d+)').astype(float)
+            bins = [0, 18, 35, 50, 65, 80, 120]
+            labels = ['Pediatric', 'Young Adult', 'Adult', 'Middle-Acent', 'Senior', 'Elderly']
+            df['age_group'] = pd.cut(df['age_numeric'], bins=bins, labels=labels, right=False)
+            df.drop(columns=['age_numeric'], inplace=True)
+            logger.info("Engineered 'age_group' via binning from range strings.")
+        except Exception as e:
+            logger.warning(f"failed to bin age: {e}")
+
+    # C. Complexity Score: Proxy using number of diagnoses and procedures
+    if 'number_diagnoses' in df.columns and 'num_procedures' in df.columns:
+        df['clinical_complexity_score'] = df['number_diagnoses'] + df['num_procedures']
+        logger.info("Engineered 'clinical_complexity_score'.")
+
+    # 5. Encode Target Variable: 'readmitted'
     if 'readmitted' in df.columns:
         df['readmitted_binary'] = df['readmitted'].apply(lambda x: 1 if x == '>30' else 0)
     else:
         logger.error("Target column 'readmitted' not found in dataset.")
         return
 
-    # 5. Encode Categorical Features
+    # 6. Encode Categorical Features
     le = LabelEncoder()
     # We want to encode all categorical columns except the original target 'readmitted'
-    cols_to_encode = [col for col in categorical_cols if col != 'readmitted']
+    cols_to_encode = [col for col_name in categorical_cols if col_name != 'readmitted']
     
     for col in cols_to_encode:
+        # Ensure we handle potential NaN values after encoding
         df[col] = le.fit_transform(df[col].astype(str))
 
-    # 6. Split Data
+    # 7. Split Data
     # Features: everything except the original target and the new binary target
     cols_to_exclude = ['readmitted', 'readmitted_binary']
     X = df.drop(columns=[c for c in cols_to_exclude if c in df.columns])
@@ -70,7 +109,7 @@ def preprocess_diabetes_data(data_path: str, output_dir: str) -> None:
     X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
     X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp)
 
-    # 7. Save processed data
+    # 8. Save processed data
     train_path = output_path / 'train.csv'
     val_path = output_path / 'val.csv'
     test_path = output_path / 'test.csv'

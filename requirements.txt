@@ -8,6 +8,9 @@ pandas
 ollama
 scikit-learn
 xgboost
+optuna
+imbalanced-learn
+joblib
 loguru
 tenacity
 pydantic
