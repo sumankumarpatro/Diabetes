@@ -78,6 +78,17 @@ class ClinicalOrchestratorAgent:
                 logger.success("Reflector validated/corrected the extraction.")
 
             # Validate the extracted data using the Pydantic model
+            for field in ['symptoms', 'medications']:
+                if field in validated_data and isinstance(validated_data[field], list):
+                    sanitized_list = []
+                    for item in validated_data[field]:
+                        if isinstance(item, str):
+                            sanitized_list.append(item)
+                        elif isinstance(item, dict):
+                            name = item.get('name') or item.get('medication') or item.get('symptom')
+                            if name:
+                                sanitized_list.append(str(name))
+                    validated_data[field] = sanitized_list
             features = ClinicalFeatures(**validated_data)
             logger.info("Generating clinical recommendations based on prediction...")
             recommendations = self._generate_recommendations(features, readmission_prediction, context_text)
@@ -106,8 +117,10 @@ class ClinicalOrchestratorAgent:
             "STRICT CONSTRAINTS:\n"
             "1. NO INFERENCE: Do not assume any symptoms, medications, or age if not explicitly written.\n"
             "2. NO PLACEHOLDERS: NEVER return the literal strings 'string', 'list of ' or 'integer'.\n"
-            "3. MISSING DATA: If a piece of information is missing, use 'Unknown', an empty list [], or null.\n"
-            "4. ACCURACY: Every extracted value must be traceable to the provided text.\n\n"
+            "3. NO OBJECTS IN LISTS: For 'symptoms' and 'medications', you MUST return a list of simple strings. "
+            "DO NOT return a list of objects or dictionaries (e.g., use ['Insulin'], NOT [{'name': 'Insulin'}]).\n"
+            "4. MISSING DATA: If a piece of information is missing, use 'Unknown', an empty list [], or null.\n"
+            "5. ACCURACY: Every extracted value must be traceable to the provided text.\n\n"
             "FORMATTING RULES:\n"
             "1. Replace all schema placeholders with ACTUAL data found in the text.\n"
             "2. Ensure the output is a valid JSON object.\n\n"
@@ -133,37 +146,40 @@ class ClinicalOrchestratorAgent:
             "3. If a value is NOT in the text, you MUST remove it from the JSON and note it in the 'audit_log'.\n"
             "4. If a value IS in the text, you MUST confirm it in the 'audit_log'.\n\n"
             "AUDIT RULE:\n"
-            "Compare the 'EXTRACTED DATA' against the 'ORIGINAL NOTE'. If a symptom, medication, "
+            "Compare the 'EXT_DATA' against the 'ORIGINAL_NOTE'. If a symptom, medication, "
             "or age is mentioned in the JSON but NOT in the text, you MUST remove it from the JSON.\n\n"
+            "CRITICAL RULE FOR LISTS:\n"
+            "The 'symptoms' and 'medications' fields MUST be lists of simple strings. "
+            "If you find any objects or dictionaries in these lists (e.g., {'name': 'Insulin'}), "
+            "you MUST convert them to simple strings (e.g., 'Insulin') or remove them if the name is not in the text.\n\n"
+            "STRICT AUDIT LOG INSTRUCTION:\n"
+            "The 'audit_log' MUST be a very brief list of short, single-sentence strings. "
+            "DO NOT include any extra context, patient summaries, or diagnostic questions in the audit log. "
+            "Example: ['Verified age: 65', 'Removed symptom: headache'].\n\n"
             f"ORIGINAL NOTE: {original_note}\n\n"
             f"EXTRACTED DATA: {json.dumps(extracted_data)}\n\n"
-            "IMPORTANT: Ensure the output follows the correct format. Do not use 'string' or 'list of strings'.\n"
-            "Respond ONLY with the corrected JSON object containing the updated data and your 'audit_log'."
+            "IMPORTANT: Ensure the output follows the enough format. Do not use 'string' or 'list of strings'.\n"
+            "Return the corrected JSON object including the 'audit_log' field."
         )
         
-        try:
-            audit_result = self.llm.generate_structured_json(prompt, audit_schema)
-            if not audit_result:
-                return None
-            
-            # Extract only the original fields from the audit result
-            cleaned_data = {key: audit_result[key] for key in self.extraction_schema if key in audit_result}
-            
-            # Log the audit process for debugging/visibility
-            if "audit_log" in audit_result:
-                logger.info(f"Reflector Audit Log: {' | '.join(audit_result['audit_log'])}")
-                
-            return cleaned_data
-        except Exception as e:
-            logger.error(f"Reflector error: {e}")
+        result = self.llm.generate_structured_json(prompt, audit_schema)
+        
+        if not result:
             return None
+            
+        # Remove the audit_log from the result before returning it to the orchestrator
+        # so it matches the original extraction_schema
+        if "audit_log" in result:
+            del result["audit_log"]
+            
+        return result
 
-    def _generate_recommendations(self, features: ClinicalFeatures, prediction: bool, context: str) -> str:
+    def _generate_recommendations(self, features: ClinicalFeatures, readmission_prediction: bool, context: str) -> str:
         """
         Uses the LLM to generate personalized clinical recommendations based on 
         extracted features, the prediction, and retrieved medical context.
         """
-        risk_status = "HIGH RISK of readmission" if prediction else "LOW RISK of readmission"
+        risk_status = "HIGH RISK of readmission" if readmission_prediction else "LOW RISK of readmission"
         
         prompt = (
             f"Based on the following clinical data, generate personalized medical recommendations.\n\n"
