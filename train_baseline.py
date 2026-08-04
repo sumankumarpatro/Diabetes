@@ -1,143 +1,156 @@
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OrdinalEncoder
+from imblearn.pipeline import Pipeline as ImbPipeline
+from imblearn.over_sampling import SMOTENC
 import xgboost as xgb
 import optuna
 import joblib
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import roc_auc_score, classification_report, precision_score, recall_score, f1_score
-from imblearn.over_sampling import SMOTENC
 from loguru import logger
 from config import config
 from pathlib import Path
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 
-def objective(trial, X, y):
+def objective(trial, pipeline, X_train, y_train):
     """
-    Optuna objective function for hyperparameter tuning.
+    Optuna objective function for hyperparameter tuning using a pipeline.
     """
-    # Identify categorical features for SMOTENC
-    cat_features = X.select_dtypes(include=['category', 'object']).columns.tolist()
-    
-    # Apply SMOTENC to balance the training data for the objective function
-    # We use a subset of the data to keep tuning fast
-    smote = SMOTENC(categorical_features=cat_features, random_state=42)
-    X_resampled, y_resampled = smote.fit_resample(X, y)
-
     param = {
-        'n_estimators': trial.suggest_int('n_estimators', 50, 300),
-        'max_depth': trial.suggest_int('max_depth', 3, 10),
-        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-        'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
-        'gamma': trial.suggest_float('gamma', 0, 5),
-        'random_state': 42,
-        'use_label_encoder': False,
-        'eval_metric': 'logloss',
-        'enable_categorical': True
+        'classifier__n_estimators': trial.suggest_int('classifier__n_estimators', 50, 300),
+        'classifier__max_depth': trial.suggest_int('classifier__max_depth', 3, 10),
+        'classifier__learning_rate': trial.suggest_float('classifier__learning_rate', 0.01, 0.3, log=True),
+        'classifier__subsample': trial.suggest_float('classifier__subsample', 0.5, 1.0),
+        'classifier__colsample_bytree': trial.suggest_float('classifier__colsample_bytree', 0.5, 1.0),
+        'classifier__min_child_weight': trial.suggest_int('classifier__min_child_weight', 1, 10),
+        'classifier__gamma': trial.suggest_float('classifier__gamma', 0, 5),
     }
-
-    # Calculate class imbalance ratio for scale_pos_weight
-    ratio = (y == 0).sum() / (y == 1).sum()
-    param['scale_pos_weight'] = ratio
-
-    clf = xgb.XGBClassifier(**param)
     
-    # Use cross-validation to evaluate the hyperparameters
-    # Using 3-fold CV to keep it relatively fast during tuning
-    score = cross_val_score(clf, X_resampled, y_resampled, n_jobs=-1, cv=3, scoring='roc_auc')
+    # Calculate ratio for scale_pos_weight
+    ratio = (y_train == 0).sum() / (y_train == 1).sum()
+    param['classifier__scale_pos_weight'] = ratio
+    
+    pipeline.set_params(**param)
+    score = cross_val_score(pipeline, X_train, y_train, n_jobs=-1, cv=3, scoring='roc_auc')
     return score.mean()
 
-def train_optimized_model(train_path: str, val_path: str, model_output_path: str) -> None:
+def train_optimized_model(data_path: str, model_output_path: str) -> None:
     """
-    Trains an optimized XGBoost model using Optuna hyperparameter tuning.
+    Trains an optimized XGBoost model using a robust Pipeline.
     """
-    train_path = Path(train_path)
-    val_path = Path(val_path)
+    data_path = Path(data_path)
     model_output_path = Path(model_output_path)
 
-    if not train_path.exists() or not val_path.exists():
-        logger.error(f"Error: Data files not found. Ensure {train_path} and {val_path} exist.")
+    if not data_path.exists():
+        logger.error(f"Error: Data file not found. Ensure {data_path} exists.")
         return
 
-    logger.info(f"Loading training data from: {train_path}")
-    train_df = pd.read_csv(train_path)
-    logger.info(f"Loading validation data from: {val_path}")
-    val_df = pd.read_csv(val_path)
+    logger.info(f"Loading cleaned data from: {data_path}")
+    df = pd.read_csv(data_path)
 
     target_col = 'readmitted_binary'
     
-    X_train = train_df.drop(columns=[target_col])
-    y_train = train_df[target_col]
+    # 1. Immediate Split
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    # We'll use a validation set for the final evaluation
+    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42, stratify=y_train)
+
+    # Show class distribution after split
+    logger.info(f"Training set class distribution:\n{y_train.value_counts()}")
+    logger.info(f"Validation set class distribution:\n{y_val.value_counts()}")
+
+    # Identify feature types
+    numeric_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
     
-    X_val = val_df.drop(columns=[target_col])
-    y_val = val_df[target_col]
+    logger.info(f"Numeric features: {len(numeric_cols)}")
+    logger.info(f"Categorical features: {len(categorical_cols)}")
 
-    # Convert object columns to category for XGBoost
-    for col in X_train.select_dtypes(include=['object']).columns:
-        X_train[col] = X_train[col].astype('category')
-        if col in X_val.columns:
-            X_val[col] = X_val[col].astype('category')
-
-    # --- Apply SMOTENC to balance the training data ---
-    logger.info("Applying SMOTENC to balance training data...")
-    cat_features = X_train.select_dtypes(include=['category', 'object']).columns.tolist()
-    smote = SMOTENC(categorical_features=cat_features, random_state=42)
-    X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
+    # 2. Define the Pipeline
+    # We use Imbalanced-learn Pipeline to ensure SMOTE is only applied to training folds during CV
+    # and only to the training set during final fit.
     
-    logger.info(f"Resampled training shape: {X_train_resampled.shape}")
+    # For simplicity in this refactor, we'll use a single pipeline with SMOTENC.
+    # Note: SMOTENC requires categorical features indices.
+    cat_indices = [X_train.columns.get_loc(col) for col in categorical_cols]
+    
+    numeric_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median'))
+    ])
 
-    logger.info(f"Training shape: {X_train.shape}")
-    logger.info(f"Validation shape: {X_val.shape}")
+    categorical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
+    ])
 
-    # --- Hyperparameter Tuning with Optuna ---
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_cols),
+            ('cat', categorical_transformer, categorical_cols)
+        ]
+    )
+
+    # The full pipeline
+    pipeline = ImbPipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('smote', SMOTENC(categorical_features=cat_indices, random_state=42)),
+        ('classifier', xgb.XGBClassifier(random_state=42, enable_categorical=True))
+    ])
+
+    # 3. Hyperparameter Tuning with Optuna
     logger.info("Starting Hyperparameter Tuning with Optuna...")
     study = optuna.create_study(direction='maximize')
-    study.optimize(lambda trial: objective(trial, X_train_resampled, y_train_resampled), n_trials=20)
+    
+    # Reverting to full number of trials for proper optimization
+    study.optimize(lambda trial: objective(trial, pipeline, X_train, y_train), n_trials=20)
 
     logger.success(f"Best hyperparameters found: {study.best_params}")
 
-    # --- Final Training with Best Parameters ---
+    # 4. Final Training with Best Parameters
     logger.info("Training final model with best parameters...")
     
-    # Re-calculate ratio for the final model (using the original imbalanced data for scale_pos_weight)
-    ratio = (y_train == 0).sum() / (y_train == 1).sum()
-    
     best_params = study.best_params
-    best_params['scale_pos_weight'] = ratio
-    best_params['use_label_encoder'] = False
-    best_params['eval_metric'] = 'logloss'
-    best_params['random_state'] = 42
-    best_params['enable_categorical'] = True
+    ratio = (y_train == 0).sum() / (y_train == 1).sum()
+    best_params['classifier__scale_pos_weight'] = ratio
+    
+    pipeline.set_params(**best_params)
+    pipeline.fit(X_train, y_train)
 
-    final_model = xgb.XGBClassifier(**best_params)
-    final_model.fit(X_train_resampled, y_train_resampled)
+    # 5. Evaluation
+    y_pred = pipeline.predict(X_test)
+    y_prob = pipeline.predict_proba(X_test)[:, 1]
 
-    # Predictions
-    y_pred = final_model.predict(X_val)
-    y_prob = final_model.predict_proba(X_val)[:, 1]
+    auc = roc_auc_score(y_test, y_prob)
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
 
-    # Evaluation
-    auc = roc_auc_score(y_val, y_prob)
-    precision = precision_score(y_val, y_pred)
-    recall = recall_score(y_val, y_pred)
-    f1 = f1_score(y_val, y_pred)
-
-    logger.info("\n--- Optimized XGBoost Model Evaluation ---")
+    logger.info("\n--- Optimized Pipeline Evaluation ---")
     logger.info(f"AUC-ROC:   {auc:.4f}")
     logger.info(f"Precision: {precision:.4f}")
     logger.info(f"Recall:    {recall:.4f}")
     logger.info(f"F1-Score:  {f1:.4f}")
     logger.info("\nClassification Report:")
-    logger.info(classification_report(y_val, y_pred))
+    logger.info(classification_report(y_test, y_pred))
 
-    # Save the model
-    model_output_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(final_model, str(model_output_path))
-    logger.success(f"Optimized model saved to: {model_output_path}")
+    # 6. Save the entire pipeline as a payload
+    payload = {
+        'model': pipeline,
+        'threshold': 0.5  # Default threshold, can be optimized in the future
+    }
+    joblib.dump(payload, str(model_output_path))
+    logger.success(f"Optimized pipeline payload saved to: {model_output_path}")
 
 if __name__ == "__main__":
-    TRAIN_PATH = str(config.TRAIN_DATA_PATH)
-    VAL_PATH = str(config.PROCESSED_DIR / 'val.csv')
-    MODEL_SAVE_PATH = str(config.PROCESSED_DIR / 'baseline_xgb_model.joblib')
+    # Use the path from config to ensure consistency with test_model.py
+    MODEL_SAVE_PATH = str(config.MODEL_PAYLOAD_PATH)
+    # We need to point to the new train.csv created by preprocess_data.py
+    TRAIN_DATA_PATH = str(config.PROCESSED_DIR / 'train.csv')
 
-    train_optimized_model(TRAIN_PATH, VAL_PATH, MODEL_SAVE_PATH)
+    train_optimized_model(TRAIN_DATA_PATH, MODEL_SAVE_PATH)
