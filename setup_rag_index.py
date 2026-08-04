@@ -60,8 +60,8 @@ def setup_rag_index(kb_dir: str, index_output_path: str) -> None:
     logger.info(f"Total vectors in index: {index.ntotal}")
 
 if __name__ == "__main__":
-    # Use paths from config
-    KB_DIR = "/Users/unasumankumarpatro/Documents/Diabetes/knowledge_base"
+    # Use paths relative to project root for portability
+    KB_DIR = str(config.PROJECT_ROOT / "knowledge_base")
     INDEX_OUTPUT = str(config.INDEX_PATH)
 
     setup_rag_index(KB_DIR, INDEX_OUTPUT)
