@@ -1,15 +1,15 @@
 from loguru import logger
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 import os
 from config import config
 from pathlib import Path
+from sklearn.model_selection import train_test_split
 
 def preprocess_diabetes_data(data_path: str, output_dir: str) -> None:
     """
-    Preprocesses the diabetes dataset: cleaning, imputation, and encoding.
+    Preprocesses the diabetes dataset: cleaning and feature engineering.
+    Note: Imputation and Encoding are handled in the training pipeline to prevent leakage.
     """
     input_path = Path(data_path)
     output_path = Path(output_dir)
@@ -28,17 +28,6 @@ def preprocess_diabetes_data(data_path: str, output_dir: str) -> None:
     existing_drops = [c for c in cols_to_drop if c in df.columns]
     df.drop(columns=existing_drops, inplace=True)
     logger.info(f"Dropped columns: {existing_drops}")
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    for col in numeric_cols:
-        df[col] = df[col].fillna(df[col].median())
-
-    categorical_cols = df.select_dtypes(include=['object']).columns
-    for col in categorical_cols:
-        modes = df[col].mode()
-        if not modes.empty:
-            df[col] = df[col].fillna(modes[0])
-        else:
-            df[col] = df[col].fillna("Unknown")
     logger.info("Performing advanced feature engineering...")
     med_cols = [
         'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride',
@@ -70,42 +59,40 @@ def preprocess_diabetes_data(data_path: str, output_dir: str) -> None:
         df['clinical_complexity_score'] = df['number_diagnoses'] + df['num_procedures']
         logger.info("Engineered 'clinical_complexity_score'.")
     if 'readmitted' in df.columns:
-        df['readmitted_binary'] = df['readmitted'].apply(lambda x: 1 if x == '>30' else 0)
+        df['readmitted_binary'] = df['readmitted'].apply(lambda x: 1 if x == '<30' else 0)
+        # IMPORTANT: Drop the original 'readmitted' column to prevent target leakage
+        df.drop(columns=['readmitted'], inplace=True)
+        logger.info("Encoded 'readmitted' to 'readmitted_binary' and dropped original column to prevent leakage.")
     else:
         logger.error("Target column 'readmitted' not found in dataset.")
         return
-    le = LabelEncoder()
-    # We want to encode all categorical columns except the original target 'readmitted'
-    cols_to_encode = [col for col_name in categorical_cols if col_name != 'readmitted']
-    
-    for col in cols_to_encode:
-        # Ensure we handle potential NaN values after encoding
-        df[col] = le.fit_transform(df[col].astype(str))
-    # Features: everything except the original target and the new binary target
-    cols_to_exclude = ['readmitted', 'readmitted_binary']
-    X = df.drop(columns=[c for c in cols_to_exclude if c in df.columns])
-    y = df['readmitted_binary']
+    logger.info("Splitting data into train and test sets...")
+    target_col = 'readmitted_binary'
+    train_val_df, test_df = train_test_split(
+        df, test_size=0.2, random_state=42, stratify=df[target_col] if target_col in df.columns else None
+    )
 
-    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
-    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp)
-    train_path = output_path / 'train.csv'
-    val_path = output_path / 'val.csv'
-    test_path = output_path / 'test.csv'
+    # Save test set
+    test_output_file = output_path / 'test.csv'
+    test_df.to_csv(test_output_file, index=False)
+    logger.success(f"Test data saved in {test_output_file}")
 
-    # Re-attach target for the saved CSVs
-    pd.concat([X_train, y_train], axis=1).to_csv(train_path, index=False)
-    
-    pd.concat([X_val, y_val], axis=1).to_csv(val_path, index=False)
-    
-    pd.concat([X_test, y_test], axis=1).to_csv(test_path, index=False)
+    # Save train/val set
+    train_output_file = output_path / 'train.csv'
+    train_val_df.to_csv(train_output_file, index=False)
+    logger.success(f"Train/Val data saved in {train_output_file}")
 
-    logger.success(f"Preprocessing complete. Files saved in {output_dir}")
-    logger.info(f"Train size: {len(X_train)}, Val size: {len(X_val)}, Test size: {len(X_test)}")
-    logger.info(f"Class distribution (binary): \n{y.value_counts(normalize=True)}")
+    # Show class distribution for the training set
+    target_col = 'readmitted_binary'
+    if target_col in train_val_df.columns:
+        logger.info(f"Train/Val class distribution:\n{train_val_df[target_col].value_counts()}")
+    else:
+        logger.warning(f"Target column '{target_col}' not found for class distribution logging.")
+
+    logger.info(f"Total records: {len(df)} | Train/Val: {len(train_val_df)} | Test: {len(test_df)}")
 
 if __name__ == "__main__":
     # Use paths from config for consistency
-    # Use RAW_DATA_PATH from config
     DATA_PATH = config.RAW_DATA_PATH
     OUTPUT_DIR = str(config.PROCESSED_DIR)
     
