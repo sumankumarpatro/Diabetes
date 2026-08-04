@@ -1,0 +1,5 @@
+Clinical Indicators in Diabetes Management:
+- A1Cresult: Represents the average blood_glucose levels over the past 2-3 months. Values > 6.5% are indicative of diabetes.
+- max_glu_serum: The highest glucose level measured during the encounter. High levels (hyperglycemia) increase the risk of acute complications.
+- num_lab_procedures: The number of laboratory tests performed. A higher number often correlates with higher clinical complexity and monitoring needs.
+- glucose levels: Monitoring glucose fluctuations is critical for preventing diabetic ketoacidosis (DKA) and hyperosmolar hyperglycemic state (HHS).

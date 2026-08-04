@@ -41,24 +41,28 @@ def generate_hinglish_note(row: pd.Series) -> str:
     return random.choice(templates)
 
 def main():
-    INPUT_PATH = config.TRAIN_DATA_PATH
-    OUTPUT_PATH = config.OUTPUT_DATA_PATH
+    # Define the pairs of (input_path, output_path) to process
+    tasks = [
+        (config.TRAIN_DATA_PATH, config.OUTPUT_DATA_PATH),
+        (config.TEST_DATA_PATH, config.PROCESSED_DIR / 'test_with_notes.csv')
+    ]
 
-    if not INPUT_PATH.exists():
-        logger.error(f"Input data not found: {INPUT_PATH}")
-        return
+    for input_path, output_path in tasks:
+        if not input_path.exists():
+            logger.error(f"Input data not found: {input_path}")
+            continue
 
-    logger.info(f"Loading training data from: {INPUT_PATH}")
-    df = pd.read_csv(INPUT_PATH)
+        logger.info(f"Loading data from: {input_path}")
+        df = pd.read_csv(input_path)
 
-    logger.info("Generating Hinglish clinical notes...")
-    # Apply the generation function to each row
-    df['clinical_note'] = df.apply(generate_hinglish_note, axis=1)
+        logger.info(f"Generating Hinglish clinical notes for {input_path.name}...")
+        # Apply the generation function to each row
+        df['clinical_note'] = df.apply(generate_hinglish_note, axis=1)
 
-    # Save the new dataset
-    df.to_csv(OUTPUT_PATH, index=False)
-    logger.success(f"Successfully generated notes and saved to: {OUTPUT_PATH}")
-    logger.info(f"Sample note:\n{df['clinical_note'].iloc[0]}")
+        # Save the new dataset
+        df.to_csv(output_path, index=False)
+        logger.success(f"Successfully generated notes and saved to: {output_path}")
+        logger.info(f"Sample note:\n{df['clinical_note'].iloc[0]}")
 
 if __name__ == "__main__":
     main()
