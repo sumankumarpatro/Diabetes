@@ -1,0 +1,8 @@
+Diabetes Management Strategies:
+- Insulin Therapy: Essential for Type 1; used in Type 2 when oral agents fail.
+- Oral Antidiabetics:
+  - Biguanides (Metformin): First-line therapy.
+  - Sulfonylureas (Glipizide): Stimulate insulin secretion.
+  - SGLT2 Inhibitors: Promote glucose excretion in urine.
+  - DPP-4 Inhibitors: Increase incretin levels.
+- Lifestyle: Carbohydrate counting, regular exercise, and weight management.

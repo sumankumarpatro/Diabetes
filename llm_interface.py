@@ -30,6 +30,16 @@ class LLMInterface:
             logger.error(f"[LLMInterface] Error during JSON generation: {e}")
             return None
 
+    def generate_text(self, prompt: str) -> Optional[str]:
+        """
+        Delegates plain text generation to the underlying provider.
+        """
+        try:
+            return self.provider.generate_text(prompt)
+        except Exception as e:
+            logger.error(f"[LLMInterface] Error during text generation: {e}")
+            return None
+
     def _robust_json_parse(self, text: str) -> Optional[Dict[str, Any]]:
         """
         Uses regex to find and parse the first JSON object in a string.
