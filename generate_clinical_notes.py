@@ -33,9 +33,11 @@ def generate_hinglish_note(row: pd.Series) -> str:
     
     templates = [
         f"Patient age {age} presented with high sugar issues. {random.choice(hinglish_phrases)} Time in hospital: {time_in_hosp} days. {random.choice(hinglish_phrases)}",
-        f"Clinical note: Age {age}. Patient is taking {diabetes_med}. {random.choice(hinglish_phrases)} Lab procedures done: {num_labs}. {random.choice(hinglish_phrases)}",
-        f"Patient {age} years old. {random.choice(hinglish_phrases)} Number of medications: {num_meds}. {random.choice(hinglish_phrases)} Hospital stay: {time_in_hosp} days.",
-        f"Summary: {age} age patient. {random.choice(hinglish_phrases)} Lab tests: {num_labs}. {random.choice(hinglish_phrases)}"
+        f"Clinical note: Age {age}. Patient is taking {diabetes_med}. {random.choice(hinglish_phrases)} Lab procedures done: {num_labs}. Number of medications: {num_meds}.",
+        f"Patient {age} years old. {random.choice(hinglish_phrases)} Number of medications: {num_meds}. Hospital stay: {time_in_hosp} days. {random.choice(hinglish_phrases)}",
+        f"Summary: {age} age patient. {random.choice(hinglish_phrases)} Lab tests: {num_labs}. Hospital stay: {time_in_hosp} days.",
+        f"Age: {age}. {random.choice(hinglish_phrases)} Patient was in hospital for {time_in_hosp} days and took {num_meds} medications.",
+        f"Note: {age} year old patient. {random.choice(hinglish_phrases)} Number of medications: {num_meds}. Diabetes medicine status: {diabetes_med}."
     ]
     
     return random.choice(templates)
@@ -46,6 +48,8 @@ def main():
         (config.TRAIN_DATA_PATH, config.OUTPUT_DATA_PATH),
         (config.TEST_DATA_PATH, config.PROCESSED_DIR / 'test_with_notes.csv')
     ]
+
+    random.seed(42)
 
     for input_path, output_path in tasks:
         if not input_path.exists():
