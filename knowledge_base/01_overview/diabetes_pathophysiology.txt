@@ -1,0 +1,7 @@
+Diabetes Mellitus Pathophysiology:
+Diabetes is a group of metabolic diseases characterized by high blood glucose levels over a prolonged period. The primary issue is either insufficient insulin production (Type 1) or the body's inability to effectively use the insulin it produces (Type 2).
+
+Key mechanisms:
+- Insulin Resistance: Cells in muscles, fat, and the liver do not respond properly to insulin.
+- Beta-cell Dysfunction: The pancreas fails to produce enough insulin to overcome resistance.
+- Glucose Dysregulation: Resulting in hyperglycemia, which leads to long-term microvascular and macrovascular damage.

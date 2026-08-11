@@ -19,7 +19,12 @@ class ProjectConfig(BaseSettings):
     INDEX_PATH: Path = Field(default=Path("processed_data/medical_kb.index"))
     DOCS_PATH: Path = Field(default=Path("processed_data/medical_kb_docs.npy"))
     RETRIEVER_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
-    RETRIEVAL_K: int = 1
+    RERANKER_MODEL_NAME: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RETRIEVAL_K: int = 10
+    RERANK_K: int = 3
+    BM25_K: int = 5
+    HYBRID_WEIGHT: float = 0.5
+    use_metadata_filtering: bool = True
 
     # LLM Configuration
     LLM_MODEL_NAME: str = "medictron-7b"

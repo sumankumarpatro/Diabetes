@@ -18,3 +18,4 @@ pydantic-settings
 peft
 accelerate
 huggingface_hub
+rank_bm25

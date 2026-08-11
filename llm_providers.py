@@ -17,6 +17,13 @@ class LLMProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    def generate_text(self, prompt: str) -> Optional[str]:
+        """
+        Returns raw text output from the LLM.
+        """
+        pass
+
 class OllamaProvider(LLMProvider):
     """
     Implementation of LLMProvider using Ollama with retry logic.
@@ -51,6 +58,24 @@ class OllamaProvider(LLMProvider):
                 format='json'
             )
             
+            return response['response']
+        except (ConnectionError, TimeoutError, RuntimeError) as e:
+            logger.warning(f"[OllamaProvider] Attempt failed due to error: {suppress_error_msg(e)}. Retrying...")
+            raise e
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((RuntimeError, ConnectionError)), 
+        reraise=True
+    )
+    def generate_text(self, prompt: str) -> Optional[str]:
+        try:
+            logger.debug(f"[OllamaProvider] Sending text prompt to Ollama: {prompt[:100]}...")
+            response = ollama.generate(
+                model=self.model_name,
+                prompt=prompt
+            )
             return response['response']
         except (ConnectionError, TimeoutError, RuntimeError) as e:
             logger.warning(f"[OllamaProvider] Attempt failed due to error: {suppress_error_msg(e)}. Retrying...")

@@ -1,5 +1,0 @@
-Healthcare Utilization and Complexity:
-- time_in_hospital: Longer stays often indicate more severe acute complications or complex diagnostic processes.
-- number_emergency: The number of times a patient visited the ER. Frequent ER visits are a strong predictor of unstable diabetes and high readmission risk.
-- number_inpatient: Previous hospitalizations indicate a pattern of highly unstable chronic disease.
-- number_diagnoses: The number of different diagnoses recorded during the encounter. Higher numbers indicate higher clinical complexity.
