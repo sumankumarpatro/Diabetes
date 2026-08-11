@@ -16,15 +16,17 @@ class ClinicalFeatures(BaseModel):
     age_group: str = Field(..., description="The age group of the patient (e.g., '[0-10)', 'age 25').")
     symptoms: List[str] = Field(default_factory=list, description="List of reported symptoms.")
     medications: List[str] = Field(default_factory=list, description="List of medications the patient is taking.")
+    medication_count: Optional[int] = Field(None, description="The number of medications explicitly stated in the note.")
+    condition_status: str = Field("Unknown", description="The patient's condition status as explicitly reported in the note.")
     hospital_stay_days: Optional[int] = Field(None, description="Number of days the patient stayed in the hospital.")
-    glucose_status: str = Field(..., description="The glucose status (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Unknown').")
+    glucose_status: str = Field("Unknown", description="The glucose status (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Unknown').")
 
 class ClinicalDecisionReport(BaseModel):
     """
     The final output of the Clinical Orchestrator, containing features, prediction, and recommendations.
     """
     features: ClinicalFeatures
-    readmission_risk: bool
+    readmission_risk: Optional[bool]
     recommendations: str
 
 class ClinicalOrchestratorAgent:
@@ -39,8 +41,10 @@ class ClinicalOrchestratorAgent:
             "age_group": "The patient's age or age group (e.g., '30', '30-40', 'adult').",
             "symptoms": "A list of strings representing symptoms.",
             "medications": "A list of strings representing medications.",
+            "medication_count": "An integer count of medications explicitly stated in the note, or null.",
+            "condition_status": "A short phrase describing the patient's condition as stated in the note, or 'Unknown'.",
             "hospital_stay_days": "An integer or null.",
-            "glucose_status": "The glucose status (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Normal', 'Unknown')."
+            "glucose_status": "The glucose status (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Unknown')."
         }
         self.recommendation_schema = {
             "actionable_steps": "A list of strings, where each string is a clear, professional medical instruction (e.g., 'Monitor blood glucose levels daily').",
@@ -48,7 +52,85 @@ class ClinicalOrchestratorAgent:
             "clinical_rationale": "A brief, professional explanation for the recommendations based on the clinical data."
         }
 
-    def orchestrate(self, clinical_note: str, readmission_prediction: bool) -> Optional[ClinicalDecisionReport]:
+    def _extract_hospital_stay_days(self, clinical_note: str) -> Optional[int]:
+        """
+        Extracts hospital stay days from the note text when a clear numeric value is present.
+        """
+        import re
+
+        patterns = [
+            r'hospital\s+stay\s*[:=]\s*(\d+)',
+            r'hospital\s+stay\s*(?:was|is|for)?\s*(\d+)',
+            r'\b(\d+)\s+days?\b',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, clinical_note, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+
+        return None
+
+    def _extract_medication_count(self, clinical_note: str) -> Optional[int]:
+        """
+        Extracts the stated number of medications from the note.
+        """
+        import re
+
+        patterns = [
+            r'number of medications\s*[:=]\s*(\d+)',
+            r'medications\s*[:=]\s*(\d+)',
+            r'\b(\d+)\s+medications\b',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, clinical_note, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+
+        return None
+
+    def _extract_condition_status(self, clinical_note: str) -> Optional[str]:
+        """
+        Extracts explicit condition status phrases from the note.
+        """
+        import re
+
+        status_patterns = [
+            r'\b(stable|unstable|improving|worsening|deteriorating)\b',
+        ]
+
+        for pattern in status_patterns:
+            match = re.search(pattern, clinical_note, re.IGNORECASE)
+            if match:
+                return match.group(1).capitalize()
+
+        return None
+
+    def _merge_reflected_data(self, extracted_data: Optional[Dict[str, Any]], reflected_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Preserves the initial extraction for already-populated fields and only uses reflected values for missing data.
+        This avoids the reflection step overwriting values such as hospital_stay_days with hallucinated values.
+        """
+        if not isinstance(extracted_data, dict):
+            return reflected_data or {}
+        if not isinstance(reflected_data, dict):
+            return extracted_data
+
+        merged: Dict[str, Any] = {}
+        for key in set(extracted_data.keys()) | set(reflected_data.keys()):
+            original_value = extracted_data.get(key)
+            reflected_value = reflected_data.get(key)
+
+            is_missing = original_value is None or original_value == "" or (isinstance(original_value, list) and len(original_value) == 0)
+            if not is_missing:
+                merged[key] = original_value
+            else:
+                merged[key] = reflected_value
+
+        return merged
+
+    def orchestrate(self, clinical_note: str, readmission_prediction: Optional[bool] = None) -> Optional[ClinicalDecisionReport]:
         """
         Orchestrates the R/RAG and LLM pipeline to extract features, 
         incorporate prediction, and generate clinical recommendations.
@@ -61,156 +143,220 @@ class ClinicalOrchestratorAgent:
             context_docs = self.retriever.retrieve(clinical_note, k=config.RETRIEVAL_K)
             context_text = "\n".join(context_docs)
             logger.debug(f"Retrieved Context: {context_text[:200]}...")
-            augmented_text = f"Clinical Note: {clinical_note}\n\nMedical Context: {context_text}"
-            logger.info("Extracting features via LLM...")
-            extracted_data = self._llm_parsing(augmented_text)
+            note_only_text = f"Clinical Note: {clinical_note}"
+            logger.info("Extracting features via LLM from the note only...")
+            extracted_data = self._llm_parsing(note_only_text)
             
             if not extracted_data:
                 logger.warning("Failed to extract features from note.")
                 return None
+
+            # Prefer the explicit hospital stay from the note over the LLM's raw extraction.
+            note_hospital_stay_days = self._extract_hospital_stay_days(clinical_note)
+            if note_hospital_stay_days is not None:
+                extracted_data["hospital_stay_days"] = note_hospital_stay_days
             logger.info("Reflecting on extraction accuracy...")
             validated_data = self._reflect_on_extraction(clinical_note, extracted_data)
             
             if not validated_data:
-                logger.warning("Reflector failed to validate extraction. Falling back to original data.")
+                logger.warning("Reflector failed to validate extraction. Falling pre-reflection data.")
                 validated_data = extracted_data
             else:
+                validated_data = self._merge_reflected_data(extracted_data, validated_data)
                 logger.success("Reflector validated/corrected the extraction.")
+            # We now use the validated data to build the ClinicalDecisionReport
+            # Normalize medication entries to a flat list of strings.
+            medications_raw = validated_data.get("medications", [])
+            normalized_medications = []
+            if isinstance(medications_raw, list):
+                for item in medications_raw:
+                    if isinstance(item, list):
+                        normalized_medications.extend(str(sub).strip() for sub in item if sub is not None)
+                    elif item is not None:
+                        normalized_medications.append(str(item).strip())
+            elif medications_raw is not None:
+                normalized_medications = [str(medications_raw).strip()]
 
-            # Validate the extracted data using the Pydantic model
-            for field in ['symptoms', 'medications']:
-                if field in validated_data and isinstance(validated_data[field], list):
-                    sanitized_list = []
-                    for item in validated_data[field]:
-                        if isinstance(item, str):
-                            sanitized_list.append(item)
-                        elif isinstance(item, dict):
-                            name = item.get('name') or item.get('medication') or item.get('symptom')
-                            if name:
-                                sanitized_list.append(str(name))
-                    validated_data[field] = sanitized_list
-            features = ClinicalFeatures(**validated_data)
-            logger.info("Generating clinical recommendations based on prediction...")
-            recommendations = self._generate_recommendations(features, readmission_prediction, context_text)
+            # Normalize symptoms to a list of strings when the LLM returns a comma-separated string.
+            symptoms_raw = validated_data.get("symptoms", [])
+            if isinstance(symptoms_raw, str):
+                normalized_symptoms = [s.strip() for s in symptoms_raw.split(",") if s.strip()]
+            elif isinstance(symptoms_raw, list):
+                normalized_symptoms = [str(item).strip() for item in symptoms_raw if item is not None]
+            else:
+                normalized_symptoms = []
 
-            logger.success("Successfully generated complete Clinical Decision Report.")
-            
+            hospital_stay_days = validated_data.get("hospital_stay_days")
+            if hospital_stay_days is None or hospital_stay_days == "":
+                note_hospital_stay_days = self._extract_hospital_stay_days(clinical_note)
+                if note_hospital_stay_days is not None:
+                    hospital_stay_days = note_hospital_stay_days
+            elif isinstance(hospital_stay_days, str) and hospital_stay_days.isdigit():
+                hospital_stay_days = int(hospital_stay_days)
+            elif isinstance(hospital_stay_days, (int, float)):
+                hospital_stay_days = int(hospital_stay_days)
+            else:
+                hospital_stay_days = None
+
+            medication_count = validated_data.get("medication_count")
+            if medication_count is None or medication_count == "":
+                note_medication_count = self._extract_medication_count(clinical_note)
+                if note_medication_count is not None:
+                    medication_count = note_medication_count
+                elif normalized_medications:
+                    medication_count = len(normalized_medications)
+            elif isinstance(medication_count, str) and medication_count.isdigit():
+                medication_count = int(medication_count)
+            elif isinstance(medication_count, (int, float)):
+                medication_count = int(medication_count)
+            else:
+                medication_count = None
+
+            condition_status = validated_data.get("condition_status") or "Unknown"
+            note_condition_status = self._extract_condition_status(clinical_note)
+            if note_condition_status:
+                condition_status = note_condition_status
+
+            features = ClinicalFeatures(
+                age_group=str(validated_data.get("age_group", "Unknown")),
+                symptoms=normalized_symptoms,
+                medications=normalized_medications,
+                medication_count=medication_count,
+                condition_status=condition_status,
+                hospital_stay_days=hospital_stay_days,
+                glucose_status=validated_data.get("glucose_status", "Unknown")
+            )
+
+            # Generate recommendations (this part uses the LLM again)
+            recommendations_str = self._generate_recommendations(
+                clinical_note,
+                features,
+                context_text=context_text,
+                readmission_risk=readmission_prediction,
+            )
+
             return ClinicalDecisionReport(
                 features=features,
                 readmission_risk=readmission_prediction,
-                recommendations=recommendations
+                recommendations=recommendations_str
             )
-
         except Exception as e:
             logger.error(f"Orchestration failed: {e}")
             return None
 
     def _llm_parsing(self, text: str) -> Optional[Dict[str, Any]]:
+        """ Parses a clinical note into the extraction schema via LLM. """
         """
-        Uses the LLMInterface to extract structured features from the augmented text.
+        prompt = f"""
+        You are a clinical data extraction agent. Extract specific clinical entities from the provided clinical note and optional medical context.
+        Your task is to extract specific clinical entities from the provided clinical note only.
+        
+        Instructions:
+        1. Extract the following fields: {self.extraction_schema}
+        2. Only use information explicitly stated in the clinical note.
+        3. Do not infer symptoms, conditions, or glucose status from external medical knowledge.
+        4. Interpret mixed English/Hindi patient text, but do not invent new symptoms, medication names, or condition details.
+        5. If a value is not stated, use null or an empty list.
+        6. Output the result as a valid JSON object only.
+        
+        Clinical Note:
+        {text}
+        
+        JSON Output:
         """
-        # IMPROVED: Added explicit formatting rules and strict constraints to prevent hallucinations
-        prompt = (
-            "You are a medical data extraction assistant. Your task is to extract information "
-            "STRICTLY from the provided text. Do not infer symptoms or medications that are not "
-            "explicitly stated. If a piece of information is missing, follow the schema instructions.\n\n"
-            "STRICT CONSTRAINTS:\n"
-            "1. NO INFERENCE: Do not assume any symptoms, medications, or age if not explicitly written.\n"
-            "2. NO PLACEHOLDERS: NEVER return the literal strings 'string', 'list of ' or 'integer'.\n"
-            "3. NO OBJECTS IN LISTS: For 'symptoms' and 'medications', you MUST return a list of simple strings. "
-            "DO NOT return a list of objects or dictionaries (e.g., use ['Insulin'], NOT [{'name': 'Insulin'}]).\n"
-            "4. MISSING DATA: If a piece of information is missing, use 'Unknown', an empty list [], or null.\n"
-            "5. ACCURACY: Every extracted value must be traceable to the provided text.\n\n"
-            "FORMATTING RULES:\n"
-            "1. Replace all schema placeholders with ACTUAL data found in the text.\n"
-            "2. Ensure the output is a valid JSON object.\n\n"
-            f"Text to process:\n{text}"
-        )
-        return self.llm.generate_structured_json(prompt, self.extraction_schema)
+        response_json = self.llm.generate_structured_json(prompt, self.extraction_schema)
+        if not response_json:
+            return None
+        return response_json
 
     def _reflect_on_extraction(self, original_note: str, extracted_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """ A secondary LLM call to verify extracted data against the original note. """
         """
-        The 'Reflector' step: A second LLM call to verify that the extracted data 
-        is strictly present in the original note and contains no hallucinations.
-        Uses a Chain-of-Thought approach by requiring an 'audit_log' in the schema.
+        prompt = f"""
+        You are a clinical auditor. Verify if the extracted information matches the original clinical note.
+        
+        Original Note: {original_note}
+        Extracted Data: {json.dumps(extracted_data)}
+        
+        Instructions:
+        1. Compare the extracted data against the original note.
+        2. Only change a field if the note clearly contradicts it or the field is missing.
+        3. If a symptom or condition is not explicitly mentioned, remove it or return an empty list.
+        4. Do not invent or replace values based on general knowledge or retrieved medical context.
+        5. Output the result as a valid JSON object only.
+        
+        JSON Output:
         """
-        # Define a schema for the auditor that includes an audit log for Chain-of-Thought
-        audit_schema = self.extraction_schema.copy()
-        audit_schema["audit_log"] = "A list of strings where you document your verification process for each field (e.g., 'Verified age: 30 is in text', 'Removed symptom: headache because it is not in text')."
-
-        prompt = (
-            "You are a strict medical auditor. Your ONLY job is to remove hallucinations.\n\n"
-            "AUDIT PROCESS:\n"
-            "1. Review the 'EXTRACTED DATA' field by field.\n"
-            "2. For each field, check if the value is explicitly stated in the 'ORIGINAL NOTE'.\n"
-            "3. If a value is NOT in the text, you MUST remove it from the JSON and note it in the 'audit_log'.\n"
-            "4. If a value IS in the text, you MUST confirm it in the 'audit_log'.\n\n"
-            "AUDIT RULE:\n"
-            "Compare the 'EXT_DATA' against the 'ORIGINAL_NOTE'. If a symptom, medication, "
-            "or age is mentioned in the JSON but NOT in the text, you MUST remove it from the JSON.\n\n"
-            "CRITICAL RULE FOR LISTS:\n"
-            "The 'symptoms' and 'medications' fields MUST be lists of simple strings. "
-            "If you find any objects or dictionaries in these lists (e.g., {'name': 'Insulin'}), "
-            "you MUST convert them to simple strings (e.g., 'Insulin') or remove them if the name is not in the text.\n\n"
-            "STRICT AUDIT LOG INSTRUCTION:\n"
-            "The 'audit_log' MUST be a very brief list of short, single-sentence strings. "
-            "DO NOT include any extra context, patient summaries, or diagnostic questions in the audit log. "
-            "Example: ['Verified age: 65', 'Removed symptom: headache'].\n\n"
-            f"ORIGINAL NOTE: {original_note}\n\n"
-            f"EXTRACTED DATA: {json.dumps(extracted_data)}\n\n"
-            "IMPORTANT: Ensure the output follows the enough format. Do not use 'string' or 'list of strings'.\n"
-            "Return the corrected JSON object including the 'audit_log' field."
-        )
-        
-        result = self.llm.generate_structured_json(prompt, audit_schema)
-        
-        if not result:
-            return None
-            
-        # Remove the audit_log from the result before returning it to the orchestrator
-        # so it matches the original extraction_schema
-        if "audit_log" in result:
-            del result["audit_log"]
-            
-        return result
-
-    def _generate_recommendations(self, features: ClinicalFeatures, readmission_prediction: bool, context: str) -> str:
-        """
-        Uses the LLM to generate personalized clinical recommendations based on 
-        extracted features, the prediction, and retrieved medical context.
-        """
-        risk_status = "HIGH RISK of readmission" if readmission_prediction else "LOW RISK of readmission"
-        
-        prompt = (
-            f"Based on the following clinical data, generate personalized medical recommendations.\n\n"
-            f"Patient Features: {features.model_dump_json()}\n"
-            f"Prediction Status: {risk_status}\n"
-            f"Medical Context: {context}\n\n"
-            f"Instructions:\n"
-            f"1. Use professional, natural language for all fields.\n"
-            f"2. If the risk is HIGH, focus on urgent preventative interventions to avoid readmission.\n"
-            f"3. If the risk is LOW, focus on maintenance and long-term monitoring.\n"
-            f"4. IMPORTANT: If the patient is stable or low risk, include encouraging, generic health maintenance advice (e.g., 'Continue healthy lifestyle', 'Maintain regular checkups').\n"
-            f"5. NEVER return 'No recommendations could be generated' unless there is absolutely no data to work with.\n"
-            f"Respond ONLY with a valid JSON object following this schema: {json.dumps(self.recommendation_schema)}."
-        )
-
-        recommendations_json = self.llm.generate_structured_json(prompt, self.recommendation_schema)
-        
-        if not recommendations_json:
-            return "No recommendations could be generated."
-
         try:
-            recs = recommendations_json
-            steps = "\n".join([f"- {step}" for step in recs.get("actionable_steps", [])])
-            return (
-                f"**Urgency: {recs.get('urgency_level', 'Unknown')}**\n\n"
-                f"**Actionable Steps:**\n{steps}\n\n"
-                f"**Rationale:** {recs.get('clinical_rationale', 'N/A')}"
-            )
-        except Exception as e:
-            logger.error(f"Error parsing recommendations: {e}")
-            return "Error generating formatted recommendations."
+            corrected_json = self.llm.generate_structured_json(prompt, self.extraction_schema)
+            return corrected_json
+        except Exception:
+            return None
+
+    def _build_fallback_recommendations(self, features: ClinicalFeatures, readmission_risk: Optional[bool] = None) -> str:
+        """ Builds a rule-based recommendation string when LLM output is unavailable. """
+        """
+        glucose_status = features.glucose_status or "Unknown"
+        symptoms = features.symptoms or []
+        medications = features.medications or []
+        age_group = features.age_group or "Unknown"
+
+        symptom_summary = ", ".join(symptoms[:3]) if symptoms else "the reported symptoms"
+        medication_summary = ", ".join(medications[:3]) if medications else "no medications listed"
+
+        urgency = "high" if readmission_risk is True else ("medium" if readmission_risk is False else "medium")
+        if glucose_status.lower() in {"hyperglycemia", "hypoglycemia", "high", "low"}:
+            base = f"Monitor {glucose_status.lower()} closely and review the patient's symptoms ({symptom_summary})."
+        else:
+            base = f"Continue routine monitoring and review the patient's symptoms ({symptom_summary})."
+
+        if medications:
+            base += f" Reassess medications ({medication_summary}) and confirm adherence with the care team."
+        else:
+            base += " Reconfirm medication history and update the care plan as needed."
+
+        if readmission_risk is True:
+            base += f" Because the risk is elevated for this {age_group} patient, prioritize timely follow-up and escalation if symptoms worsen."
+        elif readmission_risk is False:
+            base += f" For this {age_group} patient, routine follow-up is appropriate unless symptoms progress."
+        else:
+            base += f" For this {age_group} patient, ensure close follow-up and reassess if symptoms worsen."
+
+        return base.strip()
+
+    def _generate_recommendations(self, clinical_note: str, features: ClinicalFeatures, context_text: str = "", readmission_risk: Optional[bool] = None) -> str:
+        """
+        Generates clinical recommendations based on the extracted features and note.
+        """
+        risk_str = "High" if readmission_risk is True else ("Low" if readmission_risk is False else "Unknown")
+        context_block = f"\nMedical Context: {context_text}" if context_text.strip() else ""
+        prompt = f"""
+        You are a clinical decision support system.
+        Write a concise recommendation summary based ONLY on the provided clinical note, extracted features, and the optional medical context.
+        Return 2-3 sentences maximum. Do not repeat the prompt instructions or include generic template text.
+
+        Clinical Note: {clinical_note}
+        Extracted Features: {features.json()}
+        Known Readmission Risk: {risk_str}{context_block}
+
+        Focus on monitoring, medication review, follow-up, and escalation if symptoms worsen.
+        """
+        response = self.llm.generate_text(prompt)
+        if not response:
+            return self._build_fallback_recommendations(features, readmission_risk)
+
+        normalized = response.strip()
+        boilerplate_exclusions = [
+            "format your response",
+            "what is the diagnosis and treatment",
+            "template",
+            "professional text summary",
+            "clinical decision support system",
+        ]
+        if any(marker in normalized.lower() for marker in boilerplate_exclusions):
+            return self._build_fallback_recommendations(features, readmission_risk)
+
+        return normalized
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Clinical Orchestrator Agent with custom input.")
@@ -224,16 +370,24 @@ if __name__ == "__main__":
         print("--- Clinical Agent Input Mode ---")
         note = input("Enter the clinical note: ")
         
-        # Determine risk status based on input or default to low risk if not specified
-        # We'll check if the user wants to specify high risk via a prompt
-        risk_input = input("Is this a high risk case? (y/n, default 'n'): ").strip().lower()
-        high_risk = risk_input == 'y'
+        # Determine risk status based on input; allow unknown if not specified.
+        risk_input = input("Is this a high risk case? (y/n/u for unknown, default 'u'): ").strip().lower()
+        if risk_input == 'y':
+            high_risk = True
+        elif risk_input == 'n':
+            high_risk = False
+        else:
+            high_risk = None
     else:
         note = args.note
-        # If note is provided via CLI, we need to determine if it's high risk
-        # If --high-risk is not set, but --low-risk is, it's low risk.
-        # If neither is set, we'll default to low risk.
-        high_risk = args.high_risk
+        # If note is provided via CLI, determine risk only if specified.
+        # If neither flag is set, leave the risk unknown.
+        if args.high_risk:
+            high_risk = True
+        elif args.low_risk:
+            high_risk = False
+        else:
+            high_risk = None
 
     # Dependency Injection Setup
     retriever = RAGRetriever()
