@@ -1,6 +1,0 @@
-Diabetes Medication Overview:
-- Metformin: A biguanide that reduces glucose production in the liver.
-- Insulin: Essential for patients with insufficient endogenous insulin production.
-- Sulfonylureas (e.g., Glipizide, Glyburide, Glimepiride): Stimulate the pancreas to release more insulin.
-- Biguanides, Thiazolidinediones (e.g., Pioglitazone): Help improve insulin sensitivity.
-- Medication Count: A high number of concurrent medications (polypharmacy) is a marker of complex disease management and potential for drug-drug interactions.

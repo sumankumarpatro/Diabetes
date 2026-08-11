@@ -1,0 +1,9 @@
+Diabetes Complications:
+- Microvascular:
+  - Retinopathy (eye damage).
+  - Nephropathy (kidney damage).
+  - Neuropathy (nerve damage).
+- Macrovascular:
+  - Cardiovascular disease (heart attack, stroke).
+  - Peripheral artery disease.
+- Foot Complications: Ulcers and potential amputation due to poor circulation and neuropathy.

@@ -1,0 +1,6 @@
+Diabetes Risk Factors:
+- Obesity: Excess body fat, particularly abdominal fat, is a major risk factor for Type 2 diabetes.
+- Physical Inactivity: A sedentary lifestyle increases insulin resistance.
+- Genetics: Family history of diabetes significantly increases risk.
+- Age: Risk increases as you get older, especially after age 45.
+- Ethnicity: Certain populations (including African American, Hispanic/Latino, and Native American) are at higher risk.

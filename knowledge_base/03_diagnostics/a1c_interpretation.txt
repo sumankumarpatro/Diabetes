@@ -1,0 +1,10 @@
+Diabetes Diagnostic Tests:
+- HbA1c Test: Measures average blood sugar over 3 months. (>= 6.5% = Diabetes).
+- Fasting Plasma Glucose (FPG): Measures blood sugar after fasting. (>= 126 mg/dL = Diabetes).
+- Oral Glucose Tolerance Test (OGTT): Measures response to a sugar load. (>= 200 mg/dL = Diabetes).
+- Random Plasma Glucose Test: High glucose levels (> 200 mg/dL) with symptoms.
+
+Glucose Monitoring:
+- Self-Monitoring of Blood Glucose (SMBG): Frequent finger-prick tests.
+- Continuous Glucose Monitoring (CGM): Wearable sensor for real-time tracking.
+- Importance: Essential for preventing both hyperglycemia and hypoglycemia.
