@@ -1,19 +1,48 @@
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OrdinalEncoder
-from imblearn.pipeline import Pipeline as ImbPipeline
-from imblearn.over_sampling import SMOTENC
-import xgboost as xgb
-import optuna
-import joblib
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import roc_auc_score, classification_report, precision_score, recall_score, f1_score
-from loguru import logger
-from config import config
+import inspect
 from pathlib import Path
+import joblib
+import numpy as np
+import optuna
+import pandas as pd
+import xgboost as xgb
+from imblearn.over_sampling import SMOTENC
+from imblearn.pipeline import Pipeline as ImbPipeline
+from loguru import logger
 from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import classification_report, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OrdinalEncoder
+from config import config
+
+
+def build_fit_params(pipeline, X_val, y_val, early_stopping_rounds: int = 20, verbose: bool = False) -> dict:
+    """Build XGBoost fit params compatible with the installed version."""
+    fit_params = {
+        'classifier__verbose': verbose,
+    }
+
+    try:
+        fit_signature = inspect.signature(xgb.XGBClassifier.fit)
+    except (TypeError, ValueError):
+        fit_signature = None
+
+    if fit_signature and 'early_stopping_rounds' in fit_signature.parameters:
+        try:
+            # Transform the validation set through the pipeline preprocessor before passing it
+            # to the classifier so XGBoost receives numeric data only.
+            preprocessor = pipeline.named_steps['preprocessor']
+            X_val_transformed = preprocessor.transform(X_val)
+            fit_params['classifier__eval_set'] = [(X_val_transformed, y_val)]
+            fit_params['classifier__early_stopping_rounds'] = early_stopping_rounds
+        except (AttributeError, KeyError, ValueError) as exc:
+            logger.warning(
+                'Unable to build XGBoost eval_set for early stopping: %s. Falling back to no eval_set.',
+                exc,
+            )
+
+    return fit_params
 
 def objective(trial, pipeline, X_train, y_train):
     """
@@ -28,11 +57,7 @@ def objective(trial, pipeline, X_train, y_train):
         'classifier__min_child_weight': trial.suggest_int('classifier__min_child_weight', 1, 10),
         'classifier__gamma': trial.suggest_float('classifier__gamma', 0, 5),
     }
-    
-    # Calculate ratio for scale_pos_weight
-    ratio = (y_train == 0).sum() / (y_train == 1).sum()
-    param['classifier__scale_pos_weight'] = ratio
-    
+
     pipeline.set_params(**param)
     score = cross_val_score(pipeline, X_train, y_train, n_jobs=-1, cv=3, scoring='roc_auc')
     return score.mean()
@@ -73,8 +98,8 @@ def train_optimized_model(data_path: str, model_output_path: str) -> None:
     # and only to the training set during final fit.
     
     # For simplicity in this refactor, we'll use a single pipeline with SMOTENC.
-    # Note: SMOTENC requires categorical features indices.
-    cat_indices = [X_train.columns.get_loc(col) for col in categorical_cols]
+    # Note: SMOTENC requires categorical feature indices in the transformed array.
+    cat_indices = list(range(len(numeric_cols), len(numeric_cols) + len(categorical_cols)))
     
     numeric_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='median'))
@@ -96,25 +121,40 @@ def train_optimized_model(data_path: str, model_output_path: str) -> None:
     pipeline = ImbPipeline(steps=[
         ('preprocessor', preprocessor),
         ('smote', SMOTENC(categorical_features=cat_indices, random_state=42)),
-        ('classifier', xgb.XGBClassifier(random_state=42, enable_categorical=True))
+        ('classifier', xgb.XGBClassifier(
+            random_state=42,
+            n_jobs=-1,
+            use_label_encoder=False,
+            eval_metric='logloss'
+        ))
     ])
     logger.info("Starting Hyperparameter Tuning with Optuna...")
     study = optuna.create_study(direction='maximize')
-    
-    # Reverting to full number of trials for proper optimization
-    study.optimize(lambda trial: objective(trial, pipeline, X_train, y_train), n_trials=20)
+    study.optimize(lambda trial: objective(trial, pipeline, X_train, y_train), n_trials=30)
 
     logger.success(f"Best hyperparameters found: {study.best_params}")
     logger.info("Training final model with best parameters...")
     
     best_params = study.best_params
-    ratio = (y_train == 0).sum() / (y_train == 1).sum()
-    best_params['classifier__scale_pos_weight'] = ratio
-    
     pipeline.set_params(**best_params)
-    pipeline.fit(X_train, y_train)
-    y_pred = pipeline.predict(X_test)
+
+    # Pre-fit the preprocessor so the validation set can be transformed for XGBoost eval_set.
+    if 'preprocessor' in pipeline.named_steps:
+        pipeline.named_steps['preprocessor'].fit(X_train)
+    
+    # Use the validation set during fitting to avoid overfitting and to select the best threshold.
+    fit_params = build_fit_params(pipeline, X_val, y_val, early_stopping_rounds=20, verbose=False)
+    pipeline.fit(X_train, y_train, **fit_params)
+    logger.info("Evaluating on validation set...")
+    y_val_prob = pipeline.predict_proba(X_val)[:, 1]
+    y_val_pred = (y_val_prob >= 0.5).astype(int)
+    val_f1 = f1_score(y_val, y_val_pred)
+    logger.info(f"Validation F1 at 0.5: {val_f1:.4f}")
+
+    optimized_threshold = self_optimize_threshold(y_val, y_val_prob)
+    logger.info(f"Optimized threshold from validation: {optimized_threshold:.2f}")
     y_prob = pipeline.predict_proba(X_test)[:, 1]
+    y_pred = (y_prob >= optimized_threshold).astype(int)
 
     auc = roc_auc_score(y_test, y_prob)
     precision = precision_score(y_test, y_pred)
@@ -130,10 +170,25 @@ def train_optimized_model(data_path: str, model_output_path: str) -> None:
     logger.info(classification_report(y_test, y_pred))
     payload = {
         'model': pipeline,
-        'threshold': 0.5  # Default threshold, can be optimized in the future
+        'threshold': optimized_threshold
     }
     joblib.dump(payload, str(model_output_path))
     logger.success(f"Optimized pipeline payload saved to: {model_output_path}")
+
+
+def self_optimize_threshold(y_true, y_prob):
+    """Selects a threshold based on the best F1 score on validation probabilities."""
+    thresholds = np.linspace(0.1, 0.9, 81)
+    best_threshold = 0.5
+    best_f1 = -1.0
+    for threshold in thresholds:
+        preds = (y_prob >= threshold).astype(int)
+        score = f1_score(y_true, preds)
+        if score > best_f1:
+            best_f1 = score
+            best_threshold = threshold
+    return best_threshold
+
 
 if __name__ == "__main__":
     # Use the path from config to ensure consistency with test_model.py
