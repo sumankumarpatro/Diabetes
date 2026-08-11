@@ -53,14 +53,16 @@ def preprocess_diabetes_data(data_path: str, output_dir: str) -> None:
 
     # B. Age Binning: Create clinically relevant age groups
     if 'age' in df.columns:
-        # The 'age' column contains ranges like '[70-80)'. 
+        # The 'age' column contains ranges like '[70-80)'.
         # We need to extract the lower bound to create numeric bins.
         try:
             # Extract the first number from the range string
             df['age_numeric'] = df['age'].str.extract(r'(\d+)').astype(float)
             bins = [0, 18, 35, 50, 65, 80, 120]
-            labels = ['Pediatric', 'Young Adult', 'Adult', 'Middle-Acent', 'Senior', 'Elderly']
+            labels = ['Pediatric', 'Young Adult', 'Adult', 'Middle-Aged', 'Senior', 'Elderly']
             df['age_group'] = pd.cut(df['age_numeric'], bins=bins, labels=labels, right=False)
+            df['age_group'] = df['age_group'].astype('category')
+            df['age_group'] = df['age_group'].cat.add_categories(['Unknown']).fillna('Unknown')
             df.drop(columns=['age_numeric'], inplace=True)
             logger.info("Engineered 'age_group' via binning from range strings.")
         except Exception as e:
