@@ -146,11 +146,11 @@ class ClinicalOrchestratorAgent:
             logger.debug(f"Retrieved Context: {context_text[:200]}...")
 
             # 2. Augmentation
-            note_only_text = f"Clinical Note: {clinical_note}"
+            note_with_context = f"Clinical Note: {clinical_note}\n\nMedical Context: {context_text}"
 
             # 3. Semantic Parsing (Feature Extraction)
-            logger.info("Extracting features via LLM from the note only...")
-            extracted_data = self._llm_parsing(note_only_text)
+            logger.info("Extracting features via LLM from the note and retrieved medical context...")
+            extracted_data = self._llm_parsing(note_with_context)
             
             if not extracted_data:
                 logger.warning("Failed to extract features from note.")
@@ -260,17 +260,17 @@ class ClinicalOrchestratorAgent:
         """
         prompt = f"""
         You are a highly specialized clinical data extraction agent. 
-        Your task is to extract specific clinical entities from the provided clinical note only.
+        Your task is to extract specific clinical entities from the provided clinical note and optional medical context.
         
         Instructions:
         1. Extract the following fields: {self.extraction_schema}
-        2. Only use information explicitly stated in the clinical note.
+        2. Use the clinical note as the primary source. Use the medical context only to clarify terminology or confirm explicit details.
         3. Do not infer symptoms, conditions, or glucose status from external medical knowledge.
         4. Interpret mixed English/Hindi patient text, but do not invent new symptoms, medication names, or condition details.
         5. If a value is not stated, use null or an empty list.
         6. Output the result as a valid JSON object only.
         
-        Clinical Note:
+        Clinical Note and Context:
         {text}
         
         JSON Output:

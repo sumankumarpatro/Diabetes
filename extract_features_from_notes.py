@@ -1,3 +1,4 @@
+import asyncio
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -9,14 +10,54 @@ from rag_retriever import RAGRetriever
 from clinical_agent import ClinicalOrchestratorAgent
 from config import config
 
-def extract_features_from_dataset(input_path: str, output_path: str):
-    """
-    Processes a dataset with clinical notes, uses the ClinicalOrchestratorAgent 
-    to extract structured features, and saves the augmented dataset.
-    """
-    input_path = Path(input_path)
-    output_path = Path(output_path)
+# --- CONFIGURATION ---
+CONCURRENT_REQUESTS = 32  # Increased for Mac Studio performance
 
+async def process_row_async(sem, agent, index, note, dummy_prediction):
+    """Processes a single row using the agent with concurrency protection."""
+    async with sem:
+        try:
+            # The agent's orchestrate method is synchronous, 
+            # so we run it in an executor to avoid blocking the event loop.
+            loop = asyncio.get_running_loop()
+            report = await loop.run_in_executor(
+                None, agent.orchestrate, note, dummy_prediction
+            )
+            
+            if report:
+                features = report.features
+                return index, {
+                    'llm_num_symptoms': len(features.symptoms),
+                    'llm_num_medications': len(features.medications),
+                    'llm_glucose_status': features.glucose_status,
+                    'llm_has_meds': 1 if len(features.medications) > 0 else 0,
+                    'llm_has_symptoms': 1 if len(features.symptoms) > 0 else 0,
+                    'llm_age_group': features.age_group
+                }
+            else:
+                return index, {
+                    'llm_num_symptoms': np.nan,
+                    'llm_num_medications': np.nan,
+                    'llm_glucose_status': 'Unknown',
+                    'llm_has_meds': 0,
+                    'llm_has_symptoms': 0,
+                    'llm_age_group': 'Unknown'
+                }
+        except Exception as e:
+            logger.error(f"Error processing row {index}: {e}")
+            return index, {
+                'llm_num_symptoms': np.nan,
+                'llm_num_medications': np.nan,
+                'llm_glucose_status': 'Error',
+                'llm_has_meds': 0,
+                'llm_has_symptoms': 0,
+                'llm_age_group': 'Error'
+            }
+
+async def extract_features_from_dataset_async(sem, input_path: Path, output_path: Path):
+    """
+    Processes a dataset concurrently using asyncio.
+    """
     if not input_path.exists():
         logger.error(f"Input file not found: {input_path}")
         return
@@ -25,72 +66,33 @@ def extract_features_from_dataset(input_path: str, output_path: str):
     df = pd.read_csv(input_path)
 
     # Initialize Agent Dependencies
-    # Note: In a real scenario, you'd use the same setup as your main app
     provider = OllamaProvider() 
     llm = LLMInterface(provider)
-    retriever = RAGRetriever() # Assumes RAG index is already set up
+    retriever = RAGRetriever()
     retriever.load()
     agent = ClinicalOrchestratorAgent(retriever, llm)
 
-    new_features = []
+    logger.info(f"Starting concurrent feature extraction for {len(df)} rows (Concurrency: {CONCURRENT_REQUESTS})...")
 
-    logger.info(f"Starting feature extraction for {len(df)} rows...")
-
-    for index, row in tqdm(df.iterrows(), total=len(df)):
+    # Prepare tasks
+    tasks = []
+    for index, row in df.iterrows():
         note = row['clinical_note']
-        # We don't know the true readmission prediction here, 
-        # so we use a placeholder or a dummy value. 
-        # The extraction logic in clinical_agent.py doesn't strictly depend on it for parsing.
-        dummy_prediction = False 
+        dummy_prediction = False
+        tasks.append(process_row_async(sem, agent, index, note, dummy_prediction))
 
-        try:
-            report = agent.orchestrate(note, dummy_prediction)
-            
-            if report:
-                features = report.features
-                # Flatten the extracted features into a dictionary
-                feature_dict = {
-                    'num_symptoms': len(features.symptoms),
-                    'num_medications': len(features.meds), # Note: check field name in ClinicalFeatures
-                    'glucose_status_encoded': 0 if features.glucose_status == 'Normal' else (1 if features.glucose_status == 'Hyperglycemia' else 2),
-                    'has_symptoms': 1 if len(features.symptoms) > 0 else 0,
-                    'has_medications': 1 if len(features.medications) > 0 else 0,
-                    'extracted_age_group': features.age_group
-                }
-                # Wait, I need to check the actual field names in ClinicalFeatures from clinical_agent.py
-                # Looking back at clinical_agent.py: 
-                # age_group, symptoms, medications, hospital_stay_days, glucose_status
-                
-                # Let's re-map correctly
-                feature_dict = {
-                    'llm_num_symptoms': len(features.symptoms),
-                    'llm_num_medications': len(features.medications),
-                    'llm_glucose_status': features.glucose_status,
-                    'llm_has_meds': 1 if len(features.medications) > 0 else 0,
-                    'llm_has_symptoms': 1 if len(features.symptoms) > 0 else 0,
-                }
-                new_features.append(feature_dict)
-            else:
-                # If extraction fails, fill with NaNs/Defaults
-                new_features.append({
-                    'llm_num_symptoms': np.nan,
-                    'llm_num_medications': np.nan,
-                    'llm_glucose_status': 'Unknown',
-                    'llm_has_meds': 0,
-                    'llm_has_symptoms': 0,
-                })
-        except Exception as e:
-            logger.error(f"Error processing row {index}: {e}")
-            new_features.append({
-                'llm_num_symptoms': np.nan,
-                'llm_num_medications': np.nan,
-                'llm_glucose_status': 'Unknown',
-                'llm_has_meds': 0,
-                'llm_has_symptoms': 0,
-            })
+    # Dictionary to store results by index to maintain order
+    results_dict = {}
+    
+    # Process tasks as they complete
+    for future in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing Rows"):
+        index, feature_dict = await future
+        results_dict[index] = feature_dict
 
-    # Create DataFrame from new features
-    features_df = pd.DataFrame(new_features)
+    # Create DataFrame from results, ensuring we follow the original index order
+    sorted_indices = sorted(results_dict.keys())
+    new_features_lagged = [results_dict[idx] for idx in sorted_indices]
+    features_df = pd.DataFrame(new_features_lagged)
     
     # Concatenate with original DataFrame
     final_df = pd.concat([df.reset_index(drop=True), features_df.reset_index(drop=True)], axis=1)
@@ -100,13 +102,20 @@ def extract_features_from_dataset(input_path: str, output_path: str):
     final_df.to_csv(output_path, index=False)
     logger.success(f"Feature extraction complete. Saved to: {output_path}")
 
-if __name__ == "__main__":
-    # Define paths
-    TRAIN_WITH_NOTES = "/Users/unasumankumarpatro/Documents/Diabetes/processed_data/train_with_notes.csv"
-    TEST_WITH_NOTES = "/Users/unasumankumarpatro/Documents/Diabetes/processed_data/test_with_notes.csv"
-    
-    OUTPUT_TRAIN = "/Users/unasumankumarpatro/Documents/Diabetes/processed_data/train_with_extracted_features.csv"
-    OUTPUT_TEST = "/Users/unasumankumarpatro/Documents/Diabetes/processed_data/test_with_extracted_features.csv"
+async def main():
+    # Create the semaphore INSIDE the running event loop
+    sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
 
-    extract_features_from_dataset(TRAIN_WITH_NOTES, OUTPUT_TRAIN)
-    extract_features_from_dataset(TEST_WITH_NOTES, OUTPUT_TEST)
+    # Using paths from centralized config instead of raw strings
+    train_input = config.OUTPUT_DATA_PATH
+    test_input = config.TEST_DATA_PATH
+    
+    # Constructing output paths within processed_dir
+    output_train = config.PROCESSED_DIR / "train_with_extracted_features.csv"
+    output_test = config.PROCESSED_DIR / "test_with_extracted_features.csv"
+
+    await extract_features_from_dataset_async(sem, train_input, output_train)
+    await extract_features_from_dataset_async(sem, test_input, output_test)
+
+if __name__ == "__main__":
+    asyncio.run(main())
