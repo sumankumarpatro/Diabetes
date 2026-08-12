@@ -30,8 +30,6 @@ def build_fit_params(pipeline, X_val, y_val, early_stopping_rounds: int = 20, ve
 
     if fit_signature and 'early_stopping_rounds' in fit_signature.parameters:
         try:
-            # Transform the validation set through the pipeline preprocessor before passing it
-            # to the classifier so XGBoost receives numeric data only.
             preprocessor = pipeline.named_steps['preprocessor']
             X_val_transformed = preprocessor.transform(X_val)
             fit_params['classifier__eval_set'] = [(X_val_transformed, y_val)]
@@ -44,10 +42,58 @@ def build_fit_params(pipeline, X_val, y_val, early_stopping_rounds: int = 20, ve
 
     return fit_params
 
+
+def get_feature_columns(X: pd.DataFrame):
+    numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+    return numeric_cols, categorical_cols
+
+
+def build_preprocessor(numeric_cols, categorical_cols):
+    numeric_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median'))
+    ])
+
+    categorical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
+    ])
+
+    return ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_cols),
+            ('cat', categorical_transformer, categorical_cols)
+        ]
+    )
+
+
+def build_smote_cat_indices(numeric_cols, categorical_cols):
+    return list(range(len(numeric_cols), len(numeric_cols) + len(categorical_cols)))
+
+
+def build_classifier(**kwargs):
+    return xgb.XGBClassifier(
+        random_state=42,
+        n_jobs=-1,
+        use_label_encoder=False,
+        eval_metric='logloss',
+        **kwargs,
+    )
+
+
+def build_pipeline(preprocessor, categorical_feature_indices, classifier=None):
+    if classifier is None:
+        classifier = build_classifier()
+
+    return ImbPipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('smote', SMOTENC(categorical_features=categorical_feature_indices, random_state=42)),
+        ('classifier', classifier)
+    ])
+
+
 def objective(trial, pipeline, X_train, y_train):
-    """
-    Optuna objective function for hyperparameter tuning using a pipeline.
-    """
+    """Optuna objective function for hyperparameter tuning using a pipeline."""
     param = {
         'classifier__n_estimators': trial.suggest_int('classifier__n_estimators', 50, 300),
         'classifier__max_depth': trial.suggest_int('classifier__max_depth', 3, 10),
@@ -62,10 +108,60 @@ def objective(trial, pipeline, X_train, y_train):
     score = cross_val_score(pipeline, X_train, y_train, n_jobs=-1, cv=3, scoring='roc_auc')
     return score.mean()
 
+
+def split_train_val_test(X, y, test_size=0.2, val_size=0.2, random_state=42):
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train, y_train, test_size=val_size, random_state=random_state, stratify=y_train
+    )
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def log_split_summary(y_train, y_val):
+    logger.info(f"Training set class distribution:\n{y_train.value_counts()}")
+    logger.info(f"Validation set class distribution:\n{y_val.value_counts()}")
+
+
+def log_feature_summary(numeric_cols, categorical_cols):
+    logger.info(f"Numeric features: {len(numeric_cols)}")
+    logger.info(f"Categorical features: {len(categorical_cols)}")
+
+
+def tune_hyperparameters(pipeline, X_train, y_train, n_trials=30):
+    logger.info("Starting Hyperparameter Tuning with Optuna...")
+    study = optuna.create_study(direction='maximize')
+    study.optimize(lambda trial: objective(trial, pipeline, X_train, y_train), n_trials=n_trials)
+    logger.success(f"Best hyperparameters found: {study.best_params}")
+    return study
+
+
+def train_final_pipeline(pipeline, X_train, y_train, X_val, y_val, early_stopping_rounds=20, verbose=False):
+    if 'preprocessor' in pipeline.named_steps:
+        pipeline.named_steps['preprocessor'].fit(X_train)
+
+    fit_params = build_fit_params(pipeline, X_val, y_val, early_stopping_rounds=early_stopping_rounds, verbose=verbose)
+    pipeline.fit(X_train, y_train, **fit_params)
+    return pipeline
+
+
+def evaluate_pipeline(pipeline, X, y, threshold=0.5):
+    y_prob = pipeline.predict_proba(X)[:, 1]
+    y_pred = (y_prob >= threshold).astype(int)
+
+    return {
+        'auc': roc_auc_score(y, y_prob),
+        'precision': precision_score(y, y_pred),
+        'recall': recall_score(y, y_pred),
+        'f1': f1_score(y, y_pred),
+        'y_prob': y_prob,
+        'y_pred': y_pred,
+    }
+
+
 def train_optimized_model(data_path: str, model_output_path: str) -> None:
-    """
-    Trains an optimized XGBoost model using a robust Pipeline.
-    """
+    """Trains an optimized XGBoost model using a robust, modular pipeline."""
     data_path = Path(data_path)
     model_output_path = Path(model_output_path)
 
@@ -80,94 +176,38 @@ def train_optimized_model(data_path: str, model_output_path: str) -> None:
     X = df.drop(columns=[target_col])
     y = df[target_col]
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    # We'll use a validation set for the final evaluation
-    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42, stratify=y_train)
+    X_train, X_val, X_test, y_train, y_val, y_test = split_train_val_test(X, y)
+    log_split_summary(y_train, y_val)
 
-    # Show class distribution after split
-    logger.info(f"Training set class distribution:\n{y_train.value_counts()}")
-    logger.info(f"Validation set class distribution:\n{y_val.value_counts()}")
+    numeric_cols, categorical_cols = get_feature_columns(X_train)
+    log_feature_summary(numeric_cols, categorical_cols)
 
-    # Identify feature types
-    numeric_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    logger.info(f"Numeric features: {len(numeric_cols)}")
-    logger.info(f"Categorical features: {len(categorical_cols)}")
-    # We use Imbalanced-learn Pipeline to ensure SMOTE is only applied to training folds during CV
-    # and only to the training set during final fit.
-    
-    # For simplicity in this refactor, we'll use a single pipeline with SMOTENC.
-    # Note: SMOTENC requires categorical feature indices in the transformed array.
-    cat_indices = list(range(len(numeric_cols), len(numeric_cols) + len(categorical_cols)))
-    
-    numeric_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='median'))
-    ])
+    preprocessor = build_preprocessor(numeric_cols, categorical_cols)
+    cat_indices = build_smote_cat_indices(numeric_cols, categorical_cols)
+    pipeline = build_pipeline(preprocessor, cat_indices)
 
-    categorical_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='most_frequent')),
-        ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
-    ])
+    study = tune_hyperparameters(pipeline, X_train, y_train)
+    pipeline.set_params(**study.best_params)
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', numeric_transformer, numeric_cols),
-            ('cat', categorical_transformer, categorical_cols)
-        ]
-    )
-
-    # The full pipeline
-    pipeline = ImbPipeline(steps=[
-        ('preprocessor', preprocessor),
-        ('smote', SMOTENC(categorical_features=cat_indices, random_state=42)),
-        ('classifier', xgb.XGBClassifier(
-            random_state=42,
-            n_jobs=-1,
-            use_label_encoder=False,
-            eval_metric='logloss'
-        ))
-    ])
-    logger.info("Starting Hyperparameter Tuning with Optuna...")
-    study = optuna.create_study(direction='maximize')
-    study.optimize(lambda trial: objective(trial, pipeline, X_train, y_train), n_trials=30)
-
-    logger.success(f"Best hyperparameters found: {study.best_params}")
     logger.info("Training final model with best parameters...")
-    
-    best_params = study.best_params
-    pipeline.set_params(**best_params)
+    pipeline = train_final_pipeline(pipeline, X_train, y_train, X_val, y_val)
 
-    # Pre-fit the preprocessor so the validation set can be transformed for XGBoost eval_set.
-    if 'preprocessor' in pipeline.named_steps:
-        pipeline.named_steps['preprocessor'].fit(X_train)
-    
-    # Use the validation set during fitting to avoid overfitting and to select the best threshold.
-    fit_params = build_fit_params(pipeline, X_val, y_val, early_stopping_rounds=20, verbose=False)
-    pipeline.fit(X_train, y_train, **fit_params)
     logger.info("Evaluating on validation set...")
-    y_val_prob = pipeline.predict_proba(X_val)[:, 1]
-    y_val_pred = (y_val_prob >= 0.5).astype(int)
-    val_f1 = f1_score(y_val, y_val_pred)
-    logger.info(f"Validation F1 at 0.5: {val_f1:.4f}")
+    validation_results = evaluate_pipeline(pipeline, X_val, y_val)
+    logger.info(f"Validation F1 at 0.5: {validation_results['f1']:.4f}")
 
-    optimized_threshold = self_optimize_threshold(y_val, y_val_prob)
+    optimized_threshold = self_optimize_threshold(y_val, validation_results['y_prob'])
     logger.info(f"Optimized threshold from validation: {optimized_threshold:.2f}")
-    y_prob = pipeline.predict_proba(X_test)[:, 1]
-    y_pred = (y_prob >= optimized_threshold).astype(int)
 
-    auc = roc_auc_score(y_test, y_prob)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
-
+    test_results = evaluate_pipeline(pipeline, X_test, y_test, threshold=optimized_threshold)
     logger.info("\n--- Optimized Pipeline Evaluation ---")
-    logger.info(f"AUC-ROC:   {auc:.4f}")
-    logger.info(f"Precision: {precision:.4f}")
-    logger.info(f"Recall:    {recall:.4f}")
-    logger.info(f"F1-Score:  {f1:.4f}")
+    logger.info(f"AUC-ROC:   {test_results['auc']:.4f}")
+    logger.info(f"Precision: {test_results['precision']:.4f}")
+    logger.info(f"Recall:    {test_results['recall']:.4f}")
+    logger.info(f"F1-Score:  {test_results['f1']:.4f}")
     logger.info("\nClassification Report:")
-    logger.info(classification_report(y_test, y_pred))
+    logger.info(classification_report(y_test, test_results['y_pred']))
+
     payload = {
         'model': pipeline,
         'threshold': optimized_threshold
@@ -191,9 +231,7 @@ def self_optimize_threshold(y_true, y_prob):
 
 
 if __name__ == "__main__":
-    # Use the path from config to ensure consistency with test_model.py
     MODEL_SAVE_PATH = str(config.MODEL_PAYLOAD_PATH)
-    # We need to point to the new train.csv created by preprocess_data.py
     TRAIN_DATA_PATH = str(config.PROCESSED_DIR / 'train.csv')
 
     train_optimized_model(TRAIN_DATA_PATH, MODEL_SAVE_PATH)
