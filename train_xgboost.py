@@ -172,11 +172,18 @@ def train_optimized_model(data_path: str, model_output_path: str) -> None:
     logger.info(f"Loading cleaned data from: {data_path}")
     df = pd.read_csv(data_path)
 
+    if 'readmitted_binary' not in df.columns:
+        logger.error(f"Target column 'readmitted_binary' not found in {data_path}")
+        return
+
     target_col = 'readmitted_binary'
     X = df.drop(columns=[target_col])
     y = df[target_col]
 
-    X_train, X_val, X_test, y_train, y_val, y_test = split_train_val_test(X, y)
+    # Split only into Train and Validation to prevent leakage from the independent Test set
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
     log_split_summary(y_train, y_val)
 
     numeric_cols, categorical_cols = get_feature_columns(X_train)
@@ -194,20 +201,19 @@ def train_optimized_model(data_path: str, model_output_path: str) -> None:
 
     logger.info("Evaluating on validation set...")
     validation_results = evaluate_pipeline(pipeline, X_val, y_val)
-    logger.info(f"Validation F1 at 0.5: {validation_results['f1']:.4f}")
+    
+    logger.info("\n--- Validation Set Evaluation ---")
+    logger.info(f"Validation AUC:    {validation_results['auc']:.4f}")
+    logger.info(f"Validation Precision: {validation_results['precision']:.4f}")
+    logger.info(f"Validation Recall:    {validation_results['recall']:.4f}")
+    logger.info(f"Validation F1:     {validation_results['f1']:.4f}")
+    logger.info("\nValidation Classification Report:")
+    logger.info(classification_report(y_val, validation_results['y_pred']))
 
     optimized_threshold = self_optimize_threshold(y_val, validation_results['y_prob'])
     logger.info(f"Optimized threshold from validation: {optimized_threshold:.2f}")
 
-    test_results = evaluate_pipeline(pipeline, X_test, y_test, threshold=optimized_threshold)
-    logger.info("\n--- Optimized Pipeline Evaluation ---")
-    logger.info(f"AUC-ROC:   {test_results['auc']:.4f}")
-    logger.info(f"Precision: {test_results['precision']:.4f}")
-    logger.info(f"Recall:    {test_results['recall']:.4f}")
-    logger.info(f"F1-Score:  {test_results['f1']:.4f}")
-    logger.info("\nClassification Report:")
-    logger.info(classification_report(y_test, test_results['y_pred']))
-
+    # Save the trained model payload (pipeline + threshold)
     payload = {
         'model': pipeline,
         'threshold': optimized_threshold
@@ -231,7 +237,7 @@ def self_optimize_threshold(y_true, y_prob):
 
 
 if __name__ == "__main__":
-    MODEL_SAVE_PATH = str(config.MODEL_PAYLOAD_PATH)
-    TRAIN_DATA_PATH = str(config.PROCESSED_DIR / 'train.csv')
+    MODEL_SAVE_PATH = str(config.MODEL_PAYLOAD_PATH_BASELINE)
+    TRAIN_DATA_PATH = str(config.TRAIN_DATA_PATH)
 
     train_optimized_model(TRAIN_DATA_PATH, MODEL_SAVE_PATH)

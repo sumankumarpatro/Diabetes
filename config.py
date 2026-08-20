@@ -11,6 +11,7 @@ class ProjectConfig(BaseSettings):
     # Project Paths
     PROJECT_ROOT: Path = Path(os.getcwd())
     PROCESSED_DIR: Path = Field(default=Path("processed_data"))
+    EXPERIMENTS_DIR: Path = Field(default=Path("experiments"))
     
     # Raw Data Path (The source of truth)
     RAW_DATA_PATH: Path = Field(default=Path("Diabetes paper/diabetic_data.csv"))
@@ -36,7 +37,12 @@ class ProjectConfig(BaseSettings):
     TEST_DATA_PATH: Path = Field(default=Path("processed_data/test.csv"))
     TRAIN_WITH_NOTES_PATH: Path = Field(default=Path("processed_data/train_with_notes.csv"))
     TEST_WITH_NOTES_PATH: Path = Field(default=Path("processed_data/test_with_notes.csv"))
-    MODEL_PAYLOAD_PATH: Path = Field(default=Path("processed_data/optimized_xgb_pipeline.joblib"))
+    TRAIN_WITH_EXTRACTED_FEATURES_PATH: Path = Field(default=Path("processed_data/train_with_extracted_features.csv"))
+    TEST_WITH_EXTRACTED_FEATURES_PATH: Path = Field(default=Path("processed_data/test_with_extracted_features.csv"))
+    
+    # Model Payload Paths
+    MODEL_PAYLOAD_PATH_BASELINE: Path = Field(default=Path("experiments/xgb_model_baseline.joblib"))
+    MODEL_PAYLOAD_PATH_LLM_ENHANCED: Path = Field(default=Path("experiments/xgb_model_llm_enhanced.joblib"))
 
     class Config:
         env_file = ".env"
