@@ -33,8 +33,8 @@ class ProjectConfig(BaseSettings):
 
     TRAIN_DATA_PATH: Path = Field(default=Path("processed_data/train.csv"))
     TEST_DATA_PATH: Path = Field(default=Path("processed_data/test.csv"))
-    OUTPUT_DATA_PATH: Path = Field(default=Path("processed_data/train_with_notes.csv"))
-
+    TRAIN_WITH_NOTES_PATH: Path = Field(default=Path("processed_data/train_with_notes.csv"))
+    TEST_WITH_NOTES_PATH: Path = Field(default=Path("processed_data/test_with_notes.csv"))
     MODEL_PAYLOAD_PATH: Path = Field(default=Path("processed_data/optimized_xgb_pipeline.joblib"))
 
     class Config:

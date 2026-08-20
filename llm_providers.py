@@ -81,6 +81,12 @@ class OllamaProvider(LLMProvider):
             logger.warning(f"[OllamaProvider] Attempt failed due to error: {suppress_error_msg(e)}. Retrying...")
             raise e
 
+    async def close(self):
+        """Closes the underlying Ollama AsyncClient."""
+        logger.info("[OllamaProvider] Closing provider resources.")
+        # If the client has a close method, we call it.
+        if hasattr(self.client, 'close'):
+            await self.client.close()
 
 def suppress_error_msg(e):
     return str(e)[:100]

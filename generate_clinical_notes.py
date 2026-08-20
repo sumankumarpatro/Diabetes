@@ -45,8 +45,8 @@ def generate_hinglish_note(row: pd.Series) -> str:
 def main():
     # Define the pairs of (input_path, output_path) to process
     tasks = [
-        (config.TRAIN_DATA_PATH, config.OUTPUT_DATA_PATH),
-        (config.TEST_DATA_PATH, config.PROCESSED_DIR / 'test_with_notes.csv')
+        (config.TRAIN_DATA_PATH, config.TRAIN_WITH_NOTES_PATH),
+        (config.TEST_DATA_PATH, config.TEST_WITH_NOTES_PATH)
     ]
 
     random.seed(42)
