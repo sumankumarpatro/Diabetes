@@ -146,7 +146,7 @@ async def extract_features_from_dataset_async(sem, input_path: Path, output_path
     if checkpoint_path.exists():
         checkpoint_path.unlink()
         logger.info("Cleaned up operational checkpoint cache files.")
-        
+
     await provider.close()
     retriever.close()
     logger.success(f"Feature extraction successfully completed. Target file compiled: {output_path}")
@@ -155,8 +155,8 @@ async def main():
     # Instantiate the asyncio Semaphore context block inside the active event loops
     sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
     
-    train_input = config.OUTPUT_DATA_PATH
-    test_input = config.TEST_DATA_PATH
+    train_input = config.TRAIN_WITH_NOTES_PATH
+    test_input = config.TEST_WITH_NOTES_PATH
     
     output_train = config.PROCESSED_DIR / "train_with_extracted_features.csv"
     output_test = config.PROCESSED_DIR / "test_with_extracted_features.csv"
