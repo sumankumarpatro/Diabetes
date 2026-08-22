@@ -8,6 +8,9 @@ class ProjectConfig(BaseSettings):
     Centralized configuration for the Diabetes Clinical Agent project.
     Uses pydantic-settings to load from environment variables or .env file.
     """
+    # Execution Mode: 'baseline', 'bert', 'llm_enhanced', or 'hybrid'
+    MODE: str = Field(default="baseline")
+
     # Project Paths
     PROJECT_ROOT: Path = Path(os.getcwd())
     PROCESSED_DIR: Path = Field(default=Path("processed_data"))
@@ -31,6 +34,11 @@ class ProjectConfig(BaseSettings):
     LLM_MODEL_NAME: str = "medictron-7b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_PROVIDER_TYPE: str = "ollama"
+    BERT_MODEL_NAME: str = "emilyalsentzer/Bio_ClinicalBERT"
+    BERT_EMBEDDING_DIM: int = 768
+    BERT_PCA_COMPONENTS: int = 32
+    TRAIN_BERT_EMBEDDINGS_PATH: Path = Field(default=Path("processed_data/train_bert_embeddings.npy"))
+    TEST_BERT_EMBEDDINGS_PATH: Path = Field(default=Path("processed_data/test_bert_embeddings.npy"))
 
     TRAIN_DATA_PATH: Path = Field(default=Path("processed_data/train.csv"))
     TEST_DATA_PATH: Path = Field(default=Path("processed_data/test.csv"))
@@ -41,7 +49,38 @@ class ProjectConfig(BaseSettings):
     
     # Model Payload Paths
     MODEL_PAYLOAD_PATH_BASELINE: Path = Field(default=Path("experiments/xgb_model_baseline.joblib"))
+    MODEL_PAYLOAD_PATH_BERT: Path = Field(default=Path("experiments/xgb_model_bert.joblib"))
     MODEL_PAYLOAD_PATH_LLM_ENHANCED: Path = Field(default=Path("experiments/xgb_model_llm_enhanced.joblib"))
+    MODEL_PAYLOAD_PATH_HYBRID: Path = Field(default=Path("experiments/xgb_model_hybrid.joblib"))
+
+    @property
+    def active_train_path(self) -> Path:
+        """ Returns the appropriate training path based on the current MODE. """
+        if self.MODE == "baseline":
+            return self.TRAIN_DATA_PATH
+        elif self.MODE == "bert":
+            return self.TRAIN_WITH_NOTES_PATH
+        return self.TRAIN_WITH_EXTRACTED_FEATURES_PATH
+
+    @property
+    def active_test_path(self) -> Path:
+        """ Returns the appropriate testing path based on the current MODE. """
+        if self.MODE == "baseline":
+            return self.TEST_DATA_PATH
+        elif self.MODE == "bert":
+            return self.TEST_WITH_NOTES_PATH
+        return self.TEST_WITH_EXTRACTED_FEATURES_PATH
+
+    @property
+    def active_model_payload_path(self) -> Path:
+        """ Returns the target model joblib path for the current MODE. """
+        mapping = {
+            "baseline": self.MODEL_PAYLOAD_PATH_BASELINE,
+            "bert": self.MODEL_PAYLOAD_PATH_BERT,
+            "llm_enhanced": self.MODEL_PAYLOAD_PATH_LLM_ENHANCED,
+            "hybrid": self.MODEL_PAYLOAD_PATH_HYBRID,
+        }
+        return mapping.get(self.MODE, self.MODEL_PAYLOAD_PATH_BASELINE)
 
     class Config:
         env_file = ".env"

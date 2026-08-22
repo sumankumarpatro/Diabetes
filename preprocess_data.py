@@ -1,101 +1,93 @@
-from loguru import logger
-import pandas as pd
-import numpy as np
 import os
-from config import config
 from pathlib import Path
-from sklearn.model_selection import train_test_split
+from loguru import logger
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
+from config import config
 
-def preprocess_diabetes_data(data_path: str, output_dir: str) -> None:
+def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
     """
-    Preprocesses the diabetes dataset: cleaning and feature engineering.
-    Note: Imputation and Encoding are handled in the training pipeline to prevent leakage.
+    Preprocesses the diabetes dataset: cleaning and advanced feature engineering.
+    Preprocesses tabular data and performs patient-stratified train/test splitting.
     """
-    input_path = Path(data_path)
-    output_path = Path(output_dir)
-
-    if not input_path.exists():
+    if not data_path.exists():
         logger.error(f"Input data not found: {data_path}")
         return
-
-    if not output_path.exists():
-        output_path.mkdir(parents=True, exist_ok=True)
-
-    logger.info(f"Loading data from: {data_path}")
+        
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Loading raw dataset from: {data_path}")
     df = pd.read_csv(data_path)
     df.replace('?', np.nan, inplace=True)
-    cols_to_drop = ['encounter_id', 'patient_nbr', 'payer_code']
-    existing_drops = [c for c in cols_to_drop if c in df.columns]
-    df.drop(columns=existing_drops, inplace=True)
-    logger.info(f"Dropped columns: {existing_drops}")
-    logger.info("Performing advanced feature engineering...")
-    med_cols = [
-        'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride',
-        'acetohexamide', 'glipizide', 'glyburide', 'tolbutamide', 'pioglitazone',
-        'rosiglitazone', 'acarbose', 'miglitol', 'troglitazone', 'tolazamide',
-        'examide', 'citoglipton', 'insulin', 'glyburide-metformin',
-        'glipizide-metformin', 'glime_pioglitazone', 'metformin-rosiglitazone',
-        'metformin-pioglitazone'
-    ]
-    # Filter to only those that actually exist in the dataframe
-    existing_med_cols = [c for c in med_cols if c in df.columns]
-    if existing_med_cols:
-        df['total_medications_count'] = df[existing_med_cols].sum(axis=1)
-        logger.info(f"Engineered 'total_medications_count' using {len(existing_med_cols)} columns.")
-    if 'age' in df.columns:
-        # The 'age' column contains ranges like '[70-80)'.
-        # We need to extract the lower bound to create numeric bins.
-        try:
-            # Extract the first number from the range string
-            df['age_numeric'] = df['age'].str.extract(r'(\d+)').astype(float)
-            bins = [0, 18, 35, 50, 65, 80, 120]
-            labels = ['Pediatric', 'Young Adult', 'Adult', 'Middle-Aged', 'Senior', 'Elderly']
-            df['age_group'] = pd.cut(df['age_numeric'], bins=bins, labels=labels, right=False)
-            df['age_group'] = df['age_group'].astype('category')
-            df['age_group'] = df['age_group'].cat.add_categories(['Unknown']).fillna('Unknown')
-            df.drop(columns=['age_numeric'], inplace=True)
-            logger.info("Engineered 'age_group' via binning from range strings.")
-        except (ValueError, KeyError) as e:
-            logger.warning(f"failed to bin age: {e}")
-    if 'number_diagnoses' in df.columns and 'num_procedures' in df.columns:
-        df['clinical_complexity_score'] = df['number_diagnoses'] + df['num_procedures']
-        logger.info("Engineered 'clinical_complexity_score'.")
     if 'readmitted' in df.columns:
-        df['readmitted_binary'] = df['readmitted'].apply(lambda x: 1 if x == '<30' else 0)
-        # IMPORTANT: Drop the original 'readmitted' column to prevent target leakage
+        df['readmitted_binary'] = df['readmitted'].apply(lambda x: 1 if str(x).strip() == '<30' else 0)
         df.drop(columns=['readmitted'], inplace=True)
-        logger.info("Encoded 'readmitted' to 'readmitted_binary' and dropped original column to prevent leakage.")
+        logger.info("Encoded 'readmitted' to 'readmitted_binary'.")
     else:
         logger.error("Target column 'readmitted' not found in dataset.")
         return
-    logger.info("Splitting data into train and test sets...")
+    logger.info("Performing feature engineering...")
+    med_cols = [
+        'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride', 
+        'acetohexamide', 'glipizide', 'glyburide', 'tolbutamide', 'pioglitazone', 
+        'rosiglitazone', 'acarbose', 'miglitol', 'troglitazone', 'tolazamide', 
+        'examide', 'citoglipton', 'insulin', 'glyburide-metformin', 'glipizide-metformin', 
+        'glime_pioglitazone', 'metformin-rosiglitazone', 'metformin-pioglitazone'
+    ]
+    existing_med_cols = [c for c in med_cols if c in df.columns]
+    if existing_med_cols:
+        # Check for active meds: string not in ['no', 'nan']
+        active_meds = df[existing_med_cols].apply(lambda col: col.astype(str).str.lower().isin(['steady', 'up', 'down'])).astype(int)
+        df['total_medications_count'] = active_meds.sum(axis=1)
+        logger.info(f"Engineered 'total_medications_count' using {len(existing_med_cols)} columns.")
+    if 'age' in df.columns:
+        try:
+            df['age_numeric'] = df['age'].str.extract(r'\[?(\d+)-').astype(float)
+            bins = [0, 18, 35, 50, 65, 80, 120]
+            labels = ['Pediatric', 'Young Adult', 'Adult', 'Middle-Aged', 'Senior', 'Elderly']
+            df['age_group'] = pd.cut(df['age_numeric'], bins=bins, labels=labels, right=False)
+            df['age_group'] = df['age_group'].astype(str).fillna('Unknown')
+            df.drop(columns=['age_numeric'], inplace=True)
+            logger.info("Engineered 'age_group'.")
+        except (ValueError, KeyError) as e:
+            logger.warning(f"Failed to bin age: {e}")
+    if 'number_diagnoses' in df.columns and 'num_procedures' in df.columns:
+        df['clinical_complexity_score'] = df['number_diagnoses'] + df['num_procedures']
+        logger.info("Engineered 'clinical_complexity_score'.")
+
+    if 'number_inpatient' in df.columns and 'number_diagnoses' in df.columns:
+        df['heavy_utilizer_score'] = df['number_inpatient'] * df['number_diagnoses']
+        logger.info("Engineered 'heavy_utilizer_score'.")
+    if 'diabetesMed' in df.columns:
+        df['diabetesMed_binary'] = df['diabetesMed'].apply(lambda x: 1 if str(x).strip().lower() == 'yes' else 0)
+        df.drop(columns=['diabetesMed'], inplace=True)
+        logger.info("Binarized 'diabetesMed'.")
     target_col = 'readmitted_binary'
-    train_val_df, test_df = train_test_split(
-        df, test_size=0.2, random_state=42, stratify=df[target_col] if target_col in df.columns else None
-    )
-
-    # Save test set
-    test_output_file = output_path / 'test.csv'
-    test_df.to_csv(test_output_file, index=False)
-    logger.success(f"Test data saved in {test_output_file}")
-
-    # Save train/val set
-    train_output_file = output_path / 'train.csv'
-    train_val_df.to_csv(train_output_file, index=False)
-    logger.success(f"Train/Val data saved in {train_output_file}")
-
-    # Show class distribution for the training set
-    target_col = 'readmitted_binary'
-    if target_col in train_val_df.columns:
-        logger.info(f"Train/Val class distribution:\n{train_val_df[target_col].value_counts()}")
+    if 'patient_nbr' in df.columns:
+        logger.info("Splitting data by patient_nbr (GroupShuffleSplit)...")
+        gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+        train_idx, test_idx = next(gss.split(df, df[target_col], groups=df['patient_nbr']))
+        train_val_df = df.iloc[train_idx].copy()
+        test_df = df.iloc[test_idx].copy()
     else:
-        logger.warning(f"Target column '{target_col}' not found for class distribution logging.")
-
-    logger.info(f"Total records: {len(df)} | Train/Val: {len(train_val_df)} | Test: {len(test_df)}")
+        logger.info("Splitting data with stratified train_test_split...")
+        train_val_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df[target_col])
+    cols_to_drop = [
+        'encounter_id', 'patient_nbr', 'payer_code', 
+        'admission_type_id', 'discharge_disposition_id', 'admission_source_id'
+    ]
+    existing_drops = [c for c in cols_to_drop if c in df.columns]
+    train_val_df.drop(columns=existing_drops, inplace=True, errors='ignore')
+    test_df.drop(columns=existing_drops, inplace=True, errors='ignore')
+    
+    train_output_file = config.TRAIN_DATA_PATH
+    test_output_file = config.TEST_DATA_PATH
+    
+    train_val_df.to_csv(train_output_file, index=False)
+    test_df.to_csv(test_output_file, index=False)
+    
+    logger.success(f"Train data saved: {train_output_file} ({len(train_val_df)} records)")
+    logger.success(f"Test data saved: {test_output_file} ({len(test_df)} records)")
 
 if __name__ == "__main__":
-    # Use paths from config for consistency
-    DATA_PATH = config.RAW_DATA_PATH
-    OUTPUT_DIR = str(config.PROCESSED_DIR)
-    
-    preprocess_diabetes_data(str(DATA_PATH), OUTPUT_DIR)
+    preprocess_diabetes_data(config.RAW_DATA_PATH, config.PROCESSED_DIR)

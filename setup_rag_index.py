@@ -1,50 +1,46 @@
 import os
-import pickle
+from pathlib import Path
 import faiss
 import numpy as np
-from rank_bm25 import BM25Okapi  
-from sentence_transformers import SentenceTransformer
-from pathlib import Path
-from config import config
+import torch
 from loguru import logger
+from sentence_transformers import SentenceTransformer
+from config import config
 
-def setup_rag_index(kb_dir: str, index_output_path: str) -> None:
+def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
     """
-    Loads text files from the knowledge base, creates embeddings, and saves a FAISS index.
-    Preserves original slicing, chunking, and array mappings exactly.
+    Loads clinical reference documents, splits them into semantic chunks,
+    generates dense embeddings using MPS (Apple Silicon GPU), and compiles a FAISS index.
     """
     kb_path = Path(kb_dir)
     index_path = Path(index_output_path)
 
     if not kb_path.exists():
-        logger.error(f"Error: Knowledge base directory {kb_dir} not found.")
+        logger.error(f"Knowledge base directory not found at: {kb_path}")
         return
     raw_documents = []
     document_metadata = []
-    
-    # Load knowledge base text documents
-    for file_path in kb_path.rglob("*.txt"):
+
+    for file_path in sorted(kb_path.rglob("*.txt")):
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                raw_documents.append(content)
-                
-            # Extract category from the parent directory name if possible
-            category = file_path.parent.name
-            document_metadata.append({
-                "source": file_path.name,
-                "category": category
-            })
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    raw_documents.append(content)
+                    document_metadata.append({
+                        "source": file_path.name,
+                        "category": file_path.parent.name if file_path.parent != kb_path else "general"
+                    })
         except (IOError, UnicodeDecodeError) as e:
             logger.error(f"Error reading file {file_path}: {e}")
 
     if not raw_documents:
-        logger.warning("No documents found in the knowledge base.")
+        logger.warning("No valid text documents found in knowledge base.")
         return
 
-    logger.info(f"Loaded {len(raw_documents)} source files from {kb_dir} (recursively)")
-    chunk_size = 500  # Characters per chunk
-    chunk_overlap = 50  # Overlap between chunks
+    logger.info(f"Loaded {len(raw_documents)} medical knowledge source files from: {kb_path}")
+    chunk_size = 500
+    chunk_overlap = 50
     documents = []
     metadata_list = []
 
@@ -52,43 +48,46 @@ def setup_rag_index(kb_dir: str, index_output_path: str) -> None:
         start = 0
         while start < len(doc):
             end = start + chunk_size
-            chunk = doc[start:end]
-            documents.append(chunk)
-            
-            # Attach metadata to each chunk
-            metadata_list.append(document_metadata[i].copy())
+            chunk = doc[start:end].strip()
+            if chunk:
+                documents.append(chunk)
+                metadata_list.append(document_metadata[i].copy())
             start += (chunk_size - chunk_overlap)
 
-    logger.info(f"Created {len(documents)} chunks from {len(raw_documents)} source files")
-    logger.info("Loading embedding model (sentence-transformers)...")
-    model = SentenceTransformer(config.RETRIEVER_MODEL_NAME)
-    logger.info("Generating embeddings for documents...")
-    embeddings = model.encode(documents, batch_size=64, show_progress_bar=True, convert_to_numpy=True)
-    dimension = embeddings.shape[1]  
-    logger.info(f"Creating FAISS index with dimension {dimension}...")
+    logger.info(f"Generated {len(documents)} overlapping knowledge chunks.")
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    logger.info(f"Loading embedding model ({config.RETRIEVER_MODEL_NAME}) on device: {device}")
+    model = SentenceTransformer(config.RETRIEVER_MODEL_NAME, device=device)
+    logger.info("Computing dense vectors for knowledge chunks...")
+    embeddings = model.encode(
+        documents,
+        batch_size=32,
+        show_progress_bar=True,
+        convert_to_numpy=True
+    ).astype("float32")
+
+    dimension = embeddings.shape[1]
+    logger.info(f"Building FAISS IndexFlatL2 with dimension {dimension}...")
     index = faiss.IndexFlatL2(dimension)
-    index.add(np.array(embeddings).astype('float32'))
+    index.add(embeddings)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     faiss.write_index(index, str(index_path))
 
-    # Save documents and metadata
     doc_mapping_path = index_path.with_name(index_path.stem + "_docs.npy")
-    np.save(str(doc_mapping_path), np.array(documents, dtype=object))
-
     meta_mapping_path = index_path.with_name(index_path.stem + "_meta.npy")
-    np.save(str(meta_mapping_path), np.array(metadata_list, dtype=object))
-
-    # Save the BM25 corpus (flattened list of all chunks)
     corpus_path = index_path.with_name(index_path.stem + "_corpus.npy")
+
+    np.save(str(doc_mapping_path), np.array(documents, dtype=object))
+    np.save(str(meta_mapping_path), np.array(metadata_list, dtype=object))
     np.save(str(corpus_path), np.array(documents, dtype=object))
 
-    logger.success(f"FAISS index saved to: {index_path}")
-    logger.info(f"Document mapping saved to: {doc_mapping_path}")
-    logger.info(f"Metadata mapping saved to: {meta_mapping_path}")
-    logger.info(f"BM25 corpus saved to: {corpus_path}")
-    logger.info(f"Total vectors in index: {index.ntotal}")
+    logger.success(f"FAISS index saved successfully to: {index_path}")
+    logger.info(f"Document mapping saved: {doc_mapping_path}")
+    logger.info(f"Metadata mapping saved: {meta_mapping_path}")
+    logger.info(f"BM25 corpus saved: {corpus_path}")
+    logger.info(f"Total vector count in index: {index.ntotal}")
 
 if __name__ == "__main__":
-    KB_DIR = str(config.PROJECT_ROOT / "knowledge_base")
-    INDEX_OUTPUT = str(config.INDEX_PATH)
+    KB_DIR = config.PROJECT_ROOT / "knowledge_base"
+    INDEX_OUTPUT = config.INDEX_PATH
     setup_rag_index(KB_DIR, INDEX_OUTPUT)
