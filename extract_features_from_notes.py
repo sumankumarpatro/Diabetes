@@ -1,10 +1,10 @@
 import asyncio
 import json
-import pandas as pd
+from pathlib import Path
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 from loguru import logger
-from pathlib import Path
 
 from llm_interface import LLMInterface
 from llm_providers import OllamaProvider
@@ -13,40 +13,72 @@ from clinical_agent import ClinicalOrchestratorAgent
 from config import config
 CONCURRENT_REQUESTS = 6
 
+def standardize_categorical_fields(feature_dict: dict) -> dict:
+    """
+    Standardizes categorical feature values into uniform tokens for XGBoost trees.
+    """
+    glucose = str(feature_dict.get('llm_glucose_status', '')).strip().lower()
+    if any(k in glucose for k in ['high', 'hyper', 'increased']):
+        feature_dict['llm_glucose_status'] = 'Hyperglycemia'
+    elif any(k in glucose for k in ['low', 'hypo', 'decreased']):
+        feature_dict['llm_glucose_status'] = 'Hypoglycemia'
+    elif any(k in glucose for k in ['normal', 'normo', 'stable']):
+        feature_dict['llm_glucose_status'] = 'Normoglycemia'
+    else:
+        feature_dict['llm_glucose_status'] = 'Unknown'
+    age = str(feature_dict.get('llm_age_group', '')).strip().lower()
+    if 'adult' in age:
+        feature_dict['llm_age_group'] = 'Adult'
+    elif any(k in age for k in ['pediatric', 'child', 'infant']):
+        feature_dict['llm_age_group'] = 'Pediatric'
+    elif any(k in age for k in ['geriatric', 'elderly', 'senior']):
+        feature_dict['llm_age_group'] = 'Geriatric'
+    else:
+        feature_dict['llm_age_group'] = 'Unknown'
+        
+    return feature_dict
+
 async def process_row_async(sem, agent, index, note, prior_readmission_indicator):
     """
-    Processes a single row natively using pure async/await mechanics.
-    Leverages a semaphore to control concurrent traffic to the local Ollama socket.
+    Processes a single row using non-blocking async semantics.
+    Bypasses recommendation generation to maximize throughput.
     """
     async with sem:
         try:
-            # Invoking the natively async orchestrate pipeline
-            report = await agent.orchestrate(note, prior_readmission_indicator)
+            report = await agent.orchestrate(note, prior_readmission_indicator, skip_reflection=False, generate_recs=False)
             
-            if report and hasattr(report, 'features') and report.features:
-                features = report.features
-                return index, {
-                    'llm_num_symptoms': len(features.symptoms) if hasattr(features, 'symptoms') else 0,
-                    'llm_num_medications': len(features.medications) if hasattr(features, 'medications') else 0,
-                    'llm_glucose_status': getattr(features, 'glucose_status', 'Unknown'),
-                    'llm_has_meds': 1 if (hasattr(features, 'medications') and len(features.medications) > 0) else 0,
-                    'llm_has_symptoms': 1 if (hasattr(features, 'symptoms') and len(features.symptoms) > 0) else 0,
-                    'llm_age_group': getattr(features, 'age_group', 'Unknown')
-                }
-            else:
-                return index, {
-                    'llm_num_symptoms': np.nan,
-                    'llm_num_medications': np.nan,
-                    'llm_glucose_status': 'Unknown',
-                    'llm_has_meds': 0,
-                    'llm_has_symptoms': 0,
-                    'llm_age_group': 'Unknown'
-                }
+            if report is None or not hasattr(report, 'features'):
+                raise ValueError(f"Orchestrator returned invalid report structure for row {index}")
+
+            features = report.features
+
+            feature_dict = {
+                'llm_num_symptoms': len(features.symptoms) if hasattr(features, 'symptoms') else 0,
+                'llm_num_medications': len(features.medications) if hasattr(features, 'medications') else 0,
+                'llm_glucose_status': getattr(features, 'glucose_status', 'Unknown'),
+                'llm_has_meds': 1 if (hasattr(features, 'medications') and len(features.medications) > 0) else 0,
+                'llm_has_symptoms': 1 if (hasattr(features, 'symptoms') and len(features.symptoms) > 0) else 0,
+                'llm_age_group': getattr(features, 'age_group', 'Unknown')
+            }
+            if hasattr(features, 'symptoms') and features.symptoms:
+                for symptom_obj in features.symptoms:
+                    s_name = symptom_obj.name.lower().replace(" ", "_").strip()
+                    is_negated = getattr(symptom_obj, 'is_negated', False)
+                    
+                    affirmed_key = f"symptom_{s_name}_affirmed"
+                    negated_key = f"symptom_{s_name}_negated"
+                    
+                    feature_dict[affirmed_key] = 1 if not is_negated else 0
+                    feature_dict[negated_key] = 1 if is_negated else 0
+
+            feature_dict = standardize_categorical_fields(feature_dict)
+            return index, feature_dict
+
         except Exception as e:
             logger.error(f"Error processing row {index}: {e}")
             return index, {
-                'llm_num_symptoms': np.nan,
-                'llm_num_medications': np.nan,
+                'llm_num_symptoms': 0,
+                'llm_num_medications': 0,
                 'llm_glucose_status': 'Error',
                 'llm_has_meds': 0,
                 'llm_has_symptoms': 0,
@@ -55,25 +87,21 @@ async def process_row_async(sem, agent, index, note, prior_readmission_indicator
 
 async def extract_features_from_dataset_async(sem, input_path: Path, output_path: Path):
     """
-    Processes a dataset concurrently using native async loops with streaming
-    JSONL checkpoint recovery to safeguard massive 100k data execution runs.
+    Processes dataset concurrently with streaming JSONL checkpoint recovery.
     """
     if not input_path.exists():
         logger.error(f"Input file not found: {input_path}")
         return
 
-    logger.info(f"Loading dataset: {input_path}")
-    # Inside extract_features_from_dataset_async, right after reading the CSV:
+    logger.info(f"Loading dataset from: {input_path}")
     df = pd.read_csv(input_path)
-    if 'readmitted_binary' in df.columns:
-        df = df.sort_values(by='readmitted_binary').reset_index(drop=True)
     
-    # Establish a streaming checkpoint file layout next to the target output destination
+    # Establish streaming checkpoint path
     checkpoint_path = output_path.with_suffix('.jsonl')
     processed_indices = set()
     checkpoint_results = {}
     if checkpoint_path.exists():
-        logger.info(f"Found runtime checkpoint mapping file: {checkpoint_path}. Parsing history...")
+        logger.info(f"Found existing checkpoint file: {checkpoint_path}. Resuming...")
         try:
             with open(checkpoint_path, 'r', encoding='utf-8') as cp_file:
                 for line in cp_file:
@@ -82,20 +110,16 @@ async def extract_features_from_dataset_async(sem, input_path: Path, output_path
                         idx = record.pop('index')
                         processed_indices.add(idx)
                         checkpoint_results[idx] = record
-            logger.info(f"Successfully loaded checkpoints. Skipping {len(processed_indices)} already processed entries.")
+            logger.info(f"Successfully loaded {len(processed_indices)} completed records from checkpoint.")
         except Exception as e:
-            logger.warning(f"Could not read historical checkpoint track ({e}). Processing from scratch.")
+            logger.warning(f"Failed to parse checkpoint ({e}). Starting fresh.")
             processed_indices = set()
             checkpoint_results = {}
-
-    # Initialize Agent Async-Ready Dependencies
     provider = OllamaProvider()
     llm = LLMInterface(provider)
     retriever = RAGRetriever()
     retriever.load()
     agent = ClinicalOrchestratorAgent(retriever, llm)
-
-    # Compile the filtered async background tasks list
     tasks = []
     for index, row in df.iterrows():
         if index in processed_indices:
@@ -106,56 +130,81 @@ async def extract_features_from_dataset_async(sem, input_path: Path, output_path
 
     total_tasks = len(tasks)
     if total_tasks == 0:
-        logger.info("All records in this targeted dataset are already flagged as complete via checkpoint history.")
+        logger.info(f"All records in {input_path.name} are already complete in checkpoint.")
     else:
-        logger.info(f"Starting native async feature extraction for {total_tasks} remaining rows (Concurrency: {CONCURRENT_REQUESTS}).")
-        
-        # Open the checkpoint file tracker in Append mode to instantly log completions to storage drive
+        logger.info(f"Starting async extraction for {total_tasks} remaining rows (Concurrency: {CONCURRENT_REQUESTS}).")
         with open(checkpoint_path, 'a', encoding='utf-8') as cp_file:
-            for future in tqdm(asyncio.as_completed(tasks), total=total_tasks, desc="Processing Rows"):
+            for future in tqdm(asyncio.as_completed(tasks), total=total_tasks, desc=f"Extracting {input_path.name}"):
                 index, feature_dict = await future
                 checkpoint_results[index] = feature_dict
-                
-                # Write checkpoint record to disk
                 checkpoint_record = {'index': index, **feature_dict}
                 cp_file.write(json.dumps(checkpoint_record) + '\n')
                 cp_file.flush()
-    logger.info("Compiling final ordered dataset structure allocations...")
-    
-    # Reassemble un-ordered completed task mappings to line up with the original base index arrangement
+    logger.info("Compiling final ordered dataset structure...")
     sorted_indices = sorted(checkpoint_results.keys())
     ordered_features = [checkpoint_results[idx] for idx in sorted_indices]
     features_df = pd.DataFrame(ordered_features)
-    
-    # Flatten indexes prior to horizontal concatenation axes execution
-    final_df = pd.concat([df.reset_index(drop=True), features_df.reset_index(drop=True)], axis=1)
-    
-    # Commit cleanly compiled CSV to permanent disk storage
+    symptom_cols = [c for c in features_df.columns if c.startswith('symptom_')]
+    if symptom_cols:
+        features_df[symptom_cols] = features_df[symptom_cols].fillna(0).astype(int)
+    final_df = pd.concat([df.loc[sorted_indices].reset_index(drop=True), features_df.reset_index(drop=True)], axis=1)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     final_df.to_csv(output_path, index=False)
-    
-    # Clean up tracking assets and close provider sockets
     if checkpoint_path.exists():
         checkpoint_path.unlink()
-        logger.info("Cleaned up operational checkpoint cache files.")
+        logger.info(f"Cleaned up checkpoint cache: {checkpoint_path}")
 
     await provider.close()
     retriever.close()
-    logger.success(f"Feature extraction successfully completed. Target file compiled: {output_path}")
+    logger.success(f"Extracted features saved to: {output_path}")
+
+def harmonize_train_test_columns(train_path: Path, test_path: Path):
+    """
+    Aligns symptom feature columns between train and test datasets.
+    Prevents XGBoost shape/feature mismatch errors.
+    """
+    logger.info("Harmonizing feature columns between Train and Test splits...")
+    if not train_path.exists() or not test_path.exists():
+        logger.error("Cannot harmonize: One or both feature files do not exist.")
+        return
+
+    train_df = pd.read_csv(train_path)
+    test_df = pd.read_csv(test_path)
+
+    # Find union of all dynamic symptom columns
+    all_symptom_cols = sorted(list(set(
+        [c for c in train_df.columns if c.startswith('symptom_')] +
+        [c for c in test_df.columns if c.startswith('symptom_')]
+    )))
+
+    for col in all_symptom_cols:
+        if col not in train_df.columns:
+            train_df[col] = 0
+        if col not in test_df.columns:
+            test_df[col] = 0
+    train_df[all_symptom_cols] = train_df[all_symptom_cols].fillna(0).astype(int)
+    test_df[all_symptom_cols] = test_df[all_symptom_cols].fillna(0).astype(int)
+    base_cols = [c for c in train_df.columns if not c.startswith('symptom_')]
+    aligned_column_order = base_cols + all_symptom_cols
+
+    train_df = train_df[aligned_column_order]
+    test_df = test_df[aligned_column_order]
+
+    train_df.to_csv(train_path, index=False)
+    test_df.to_csv(test_path, index=False)
+    logger.success(f"Successfully harmonized {len(all_symptom_cols)} symptom feature columns across Train and Test datasets.")
 
 async def main():
-    # Instantiate the asyncio Semaphore context block inside the active event loops
     sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
     
     train_input = config.TRAIN_WITH_NOTES_PATH
     test_input = config.TEST_WITH_NOTES_PATH
-    
-    output_train = config.PROCESSED_DIR / "train_with_extracted_features.csv"
-    output_test = config.PROCESSED_DIR / "test_with_extracted_features.csv"
-    
-    # Process dataset groups sequentially
+    output_train = config.TRAIN_WITH_EXTRACTED_FEATURES_PATH
+    output_test = config.TEST_WITH_EXTRACTED_FEATURES_PATH
     await extract_features_from_dataset_async(sem, train_input, output_train)
     await extract_features_from_dataset_async(sem, test_input, output_test)
+    harmonize_train_test_columns(output_train, output_test)
 
 if __name__ == "__main__":
     asyncio.run(main())

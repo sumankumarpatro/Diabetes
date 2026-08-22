@@ -1,0 +1,10 @@
+Multilingual (Hinglish) Clinical Lexicon and Negation Terms:
+- Bukhar: Fever / Pyrexia.
+- Thakan / Kamzori: Fatigue / Generalized weakness.
+- Saans phulna / Saans lene me dikkat: Dyspnea / Shortness of breath.
+- Dard / Seene me dard: Pain / Chest pain / Angina.
+- Ch चक्कर / Chakkar aana: Dizziness / Vertigo.
+- Dhundla dikhna: Blurred vision / Visual disturbance.
+- Pet dard / Ulti: Abdominal pain / Nausea / Vomiting.
+- Sojan: Edema / Swelling in extremities.
+- Negation terms ('nahi', 'nahin', 'na', 'absent', 'denied'): Denote confirmed absence of symptoms in clinical notes.

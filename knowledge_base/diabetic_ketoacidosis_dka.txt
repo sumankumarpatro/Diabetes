@@ -4,4 +4,4 @@ Symptoms:
 - Fruity-smelling breath (acetone).
 - Kussmaul breathing (deep, rapid breathing).
 - Nausea, vomiting, and abdominal pain.
-- High blood glucose, ketones in urine, and acidosis.
+- High blood glucose, ketones in urine, and metabolic acidosis.

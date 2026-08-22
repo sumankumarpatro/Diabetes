@@ -1,0 +1,5 @@
+Clinical Indicators in Diabetes Management:
+- A1Cresult: Represents average blood glucose levels over the past 2-3 months. Values > 6.5% indicate diabetes; values > 8.0% indicate elevated readmission risk.
+- max_glu_serum: The highest glucose level measured during the encounter. High levels (hyperglycemia > 200 mg/dL) increase acute metabolic complication risk.
+- num_lab_procedures: Number of laboratory tests performed. Higher counts correlate with diagnostic complexity and intensive monitoring.
+- Glucose Fluctuations: Monitoring glycemic volatility is critical for preventing acute DKA and hyperosmolar states.

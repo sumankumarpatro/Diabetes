@@ -1,0 +1,5 @@
+Healthcare Utilization and Complexity:
+- time_in_hospital: Longer hospital stays indicate severe acute illness or complex diagnostic processes.
+- number_emergency: Emergency room visits are strong predictors of chronic disease instability and high 30-day readmission risk.
+- number_inpatient: Previous hospitalizations indicate severe recurrent disease decompensation.
+- number_diagnoses: Higher counts of recorded comorbid diagnoses reflect elevated clinical complexity.

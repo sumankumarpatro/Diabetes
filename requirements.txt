@@ -5,6 +5,8 @@ sentence-transformers
 faiss-cpu
 numpy
 pandas
+import os
+from config import config
 ollama
 scikit-learn
 xgboost
