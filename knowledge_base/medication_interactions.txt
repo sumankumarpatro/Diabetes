@@ -1,0 +1,6 @@
+Diabetes Medication Overview:
+- Metformin: Biguanide reducing hepatic glucose output. Monitored for renal impairment.
+- Insulin: Essential for exogenous insulin replacement; dosage adjustments indicate disease volatility.
+- Sulfonylureas (Glipizide, Glyburide, Glimepiride): Stimulate insulin release; carries hypoglycemia risk.
+- Thiazolidinediones (Pioglitazone, Rosiglitazone): Improve peripheral insulin sensitivity.
+- Medication Count: High concurrent medication counts (polypharmacy >= 5) indicate severe comorbid disease and drug interaction risk.

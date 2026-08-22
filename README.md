@@ -10,7 +10,7 @@ The project implements a RAG-based orchestration pipeline:
 3.  **RAG Setup**: A FAISS-based vector store containing medical knowledge (ICD-10 descriptions, diabetes guidelines).
 4.  **Agent Orchestration**: A `ClinicalOrchestratorAgent` that:
     *   Receives a messy clinical note.
-     ways to retrieve relevant medical context from the knowledge base.
+    *   Uses semantic search and BM25 to retrieve relevant medical context from the knowledge base.
     *   Augments the note with retrieved context.
     *   Uses a specialized LLM (e.g., Medictron-7B) to parse the augmented text into structured JSON.
 
@@ -35,7 +35,7 @@ cd Diabetes
 It is recommended to use a virtual environment:
 ```bash
 python3 -m venv venv
-source venv/bin_activate  # On macOS/Linux
+source venv/bin/activate  # On macOS/Linux
 # or
 venv\Scripts\activate     # On Windows
 ```
@@ -45,13 +45,34 @@ venv\Scripts\activate     # On Windows
 pip install -r requirements.txt
 ```
 
-### 4. Setup Knowledge Base (RAG)
+### 4. Run the Experiment Pipeline
+The `run_experiment.py` script provides an automated way to execute the full pipeline or just the training step.
+
+**Option A: Full End-to-End Pipeline (Preprocess $\rightarrow$ Notes $\rightarrow$ RAG $\rightarrow$ Features $\rightarrow$ Train)**
+This is the most thorough method. It handles everything from raw data to the final model.
+```bash
+python3 run_experiment.py --mode llm_enhanced
+```
+
+**Option B: Training Only (Skip Setup)**
+If you have already performed the preprocessing and feature extraction (e.g., you've run the pipeline once or manually created the features), you can jump straight to training to save time.
+```bash
+python3 run_experiment.py --mode llm_enhanced --train_only
+```
+
+**Option C: Baseline Mode (Standard Training)**
+If you only want to run the baseline training on the original dataset:
+```bash
+python3 run_experiment.py --mode baseline
+```
+
+### 5. Setup Knowledge Base (RAG)
 Before running the agent, you must initialize the FAISS index:
 ```bash
 python3 setup_rag_index.py
 ```
 
-### 5. Run the Clinical Agent
+### 6. Run the Clinical Agent
 To test the orchestration pipeline with a sample Hinglish note:
 ```bash
 python3 clinical_agent.py
@@ -59,6 +80,7 @@ python3 clinical_agent.py
 
 ## 📂 Project Structure
 
+*   `run_experiment.py`: The master script to orchestrate the full pipeline or just the training step.
 *   `clinical_agent.py`: The main Orchestrator Agent logic.
 *   `rag_retriever.py`: The retrieval component for searching the FAISS index.
 *   `llm_interface.py`: Interface for interacting with LLMs (Transformers/Ollama).
