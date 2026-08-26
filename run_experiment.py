@@ -1,15 +1,15 @@
 import argparse
+import asyncio
 import logging
 import subprocess
 from pathlib import Path
-from config import config
-from train_xgboost import train_optimized_model
-from loguru import logger
-from generate_clinical_notes import main as generate_notes_main
-from extract_features_from_notes import extract_features_from_dataset_async_wrapper # We'll need to create this wrapper if it doesn't exist
-import asyncio
 import questionary
+from loguru import logger
 from tqdm import tqdm
+
+from config import config
+from generate_clinical_notes import main as generate_notes_main
+from train_multimodal import train_optimized_model
 
 def run_command(command: list[str], description: str):
     """Helper to run a shell command and log progress."""
@@ -23,42 +23,44 @@ def run_command(command: list[str], description: str):
 
 def run_experiment_pipeline(mode: str, setup: bool):
     """
-    Executes the pipeline.
-    
-    If mode="baseline":
-        If setup=True: Preprocess -> Train Baseline.
-        If setup=False: Train Baseline.
-    
-    If mode="llm_enhanced":
-        If setup=True: Preprocess -> Generate Notes -> RAG Setup -> Feature Extraction -> Train LLM-enhanced.
-        If setup=False: Train LLM-enhanced.
+    Executes the pipeline for any mode: 'baseline', 'bert', 'llm_enhanced', or 'hybrid'.
     """
     steps = []
+    if setup:
+        if not config.TRAIN_DATA_PATH.exists() or not config.TEST_DATA_PATH.exists():
+            steps.append(("Preprocessing raw data", lambda: run_command(["python3", "preprocess_data.py"], "Preprocessing raw data")))
     if mode == "baseline":
+        steps.append(("Training BASELINE model", lambda: train_optimized_model("baseline")))
+    elif mode == "bert":
         if setup:
-            steps = [
-                ("Preprocessing raw data", lambda: run_command(["python3", "preprocess_data.py"], "Preprocessing raw data") if not config.TRAIN_DATA_PATH.exists() else logger.info("Skipping preprocessing (exists)")),
-                ("Training BASELINE model", lambda: train_optimized_model(str(config.TRAIN_DATA_PATH), str(config.MODEL_PAYLOAD_PATH_BASELINE)))
-            ]
-        else:
-            steps = [
-                ("Training BASELINE model", lambda: train_optimized_model(str(config.TRAIN_DATA_PATH), str(config.MODEL_PAYLOAD_PATH_BASELINE)))
-            ]
+            if not config.TRAIN_WITH_NOTES_PATH.exists():
+                steps.append(("Generating Hinglish clinical notes", lambda: generate_notes_main()))
+            if not config.TRAIN_BERT_EMBEDDINGS_PATH.exists():
+                steps.append(("Extracting Bio_ClinicalBERT embeddings", lambda: run_command(["python3", "extract_bert_embeddings.py"], "Extracting BERT embeddings")))
+        steps.append(("Training BERT model", lambda: train_optimized_model("bert")))
     elif mode == "llm_enhanced":
         if setup:
-            steps = [
-                ("Preprocessing raw data", lambda: run_command(["python3", "preprocess_data.py"], "Preprocessing raw data") if not config.TRAIN_DATA_PATH.exists() else logger.info("Skipping preprocessing (exists)")),
-                ("Generating Hinglish clinical notes", lambda: generate_notes_main()),
-                ("Setting up RAG index", lambda: run_command(["python3", "setup_rag_index.py"], "Setting up RAG index")),
-                ("Extracting features from notes", lambda: run_command(["python3", "extract_features_from_notes.py"], "Extracting features from notes")),
-                ("Training LLM-ENHANCED model", lambda: train_optimized_model(str(config.TRAIN_WITH_EXTRACTED_FEATURES_PATH), str(config.MODEL_PAYLOAD_PATH_LLM_ENHANCED)))
-            ]
-        else:
-            steps = [
-                ("Training LLM-ENHANCED model", lambda: train_optimized_model(str(config.TRAIN_WITH_EXTRACTED_FEATURES_PATH), str(config.MODEL_PAYLOAD_PATH_LLM_ENHANCED)))
-            ]
+            if not config.TRAIN_WITH_NOTES_PATH.exists():
+                steps.append(("Generating Hinglish clinical notes", lambda: generate_notes_main()))
+            if not config.INDEX_PATH.exists():
+                steps.append(("Setting up RAG index", lambda: run_command(["python3", "setup_rag_index.py"], "Setting up RAG index")))
+            if not config.TRAIN_WITH_EXTRACTED_FEATURES_PATH.exists():
+                steps.append(("Extracting features from notes", lambda: run_command(["python3", "extract_features_from_notes.py"], "Extracting features from notes")))
+        steps.append(("Training LLM-ENHANCED model", lambda: train_optimized_model("llm_enhanced")))
+    elif mode == "hybrid":
+        if setup:
+            if not config.TRAIN_WITH_NOTES_PATH.exists():
+                steps.append(("Generating Hinglish clinical notes", lambda: generate_notes_main()))
+            if not config.INDEX_PATH.exists():
+                steps.append(("Setting up RAG index", lambda: run_command(["python3", "setup_rag_index.py"], "Setting up RAG index")))
+            if not config.TRAIN_BERT_EMBEDDINGS_PATH.exists():
+                steps.append(("Extracting Bio_ClinicalBERT embeddings", lambda: run_command(["python3", "extract_bert_embeddings.py"], "Extracting BERT embeddings")))
+            if not config.TRAIN_WITH_EXTRACTED_FEATURES_PATH.exists():
+                steps.append(("Extracting features from notes", lambda: run_command(["python3", "extract_features_from_notes.py"], "Extracting features from notes")))
+        steps.append(("Training HYBRID model", lambda: train_optimized_model("hybrid")))
 
     if not steps:
+        logger.info("No execution steps configured.")
         return
 
     logger.info(f"🚀 Starting Pipeline: Mode={mode}, Setup={setup}")
@@ -67,17 +69,14 @@ def run_experiment_pipeline(mode: str, setup: bool):
         logger.info(f"Running: {description}")
         step_func()
     
-    logger.success(f"✅ Pipeline completed for {mode} (Setup={setup})!")
+    logger.success(f"✅ Pipeline completed successfully for [{mode.upper()}] (Setup={setup})!")
 
 def main():
-    # For interactive mode, we use questionary. For CLI args, we use argparse.
-    # We'll prioritize questionary if no args are passed that conflict.
-    
     parser = argparse.ArgumentParser(description="Run Experiment Pipeline.")
     parser.add_argument(
         "--mode",
-        choices=["baseline", "llm_enhanced"],
-        help="The mode to run: 'baseline' uses raw data, 'llm_enhanced' uses data with extracted features.",
+        choices=["baseline", "bert", "llm_enhanced", "hybrid"],
+        help="The mode to run: baseline, bert, llm_enhanced, or hybrid.",
     )
     parser.add_argument(
         "--train_only",
@@ -101,15 +100,16 @@ def main():
     if args.mode is None:
         mode = questionary.select(
             "Select Experiment Mode:",
-            choices=["baseline", "llm_enhanced"]
+            choices=["baseline", "bert", "llm_enhanced", "hybrid"]
         ).ask()
     else:
         mode = args.mode
 
     if args.train_only:
         setup_required = False
+    elif args.setup_required:
+        setup_required = True
     else:
-        # If mode was selected interactively, we need to decide on setup
         if args.mode is None:
             setup_required = questionary.confirm(
                 "Do you want to run the full setup (preprocessing, notes generation, etc.)?",
@@ -124,11 +124,8 @@ def main():
     try:
         run_experiment_pipeline(mode, setup_required)
     except (RuntimeError, ValueError, FileNotFoundError) as e:
-        logger.error(f"Pipeline failed: {annotated_error(e)}")
+        logger.error(f"Pipeline failed: {type(e).__name__}: {e}")
         raise
-
-def annotated_error(e):
-    return f"{type(e).__name__}: {e}"
 
 if __name__ == "__main__":
     main()
