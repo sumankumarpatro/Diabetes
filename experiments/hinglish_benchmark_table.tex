@@ -1,0 +1,16 @@
+\begin{table}
+\caption{Code-Switched (Hinglish) Clinical Standardization Benchmark: Zero-Shot LLM vs. Hybrid RAG.}
+\label{tab:hinglish_benchmark}
+\begin{tabular}{lll}
+\toprule
+Metric & Without RAG (Zero-Shot) & With Hybrid RAG (Ours) \\
+\midrule
+Hinglish Symptom Extraction (Recall) & 10.0% & 40.0% \\
+Hinglish Symptom Extraction (Precision) & 6.7% & 23.3% \\
+Hinglish Symptom F1-Score & 8.0% & 28.0% \\
+Negation Resolution Accuracy ('nahi'/'denied') & 0.0% & 0.0% \\
+Glycemic Volatility Classification & 60.0% & 60.0% \\
+Entity Hallucination Rate (per note) & 1.00 & 1.40 \\
+\bottomrule
+\end{tabular}
+\end{table}
