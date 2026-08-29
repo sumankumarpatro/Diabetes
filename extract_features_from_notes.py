@@ -40,16 +40,16 @@ def standardize_categorical_fields(feature_dict: dict) -> dict:
         
     return feature_dict
 
-async def process_row_async(sem, agent, index, note, prior_readmission_indicator):
+async def process_row_async(sem, agent, index, note):
     """
     Processes a single row using non-blocking async semantics.
     """
     async with sem:
         try:
-            report = await agent.orchestrate(note, prior_readmission_indicator, skip_reflection=False, generate_recs=False)
+            report = await agent.orchestrate(note, skip_reflection=False, generate_recs=False)
             
             if report is None or not hasattr(report, 'features'):
-                raise ValueError(f"Orchestrator returned invalid report structure for row {index}")
+                raise ValueError(f"Extractor returned invalid report structure for row {index}")
 
             features = report.features
 
@@ -129,8 +129,7 @@ async def extract_features_from_dataset_async(sem, input_path: Path, output_path
         if index in processed_indices:
             continue
         note = row['clinical_note']
-        prior_readmission_indicator = False
-        tasks.append(process_row_async(sem, agent, index, note, prior_readmission_indicator))
+        tasks.append(process_row_async(sem, agent, index, note))
 
     total_tasks = len(tasks)
     if total_tasks == 0:

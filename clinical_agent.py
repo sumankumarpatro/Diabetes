@@ -107,7 +107,7 @@ class ClinicalOrchestratorAgent:
         for key, ref_val in reflected_data.items():
             orig_val = str(extracted_data.get(key, '')).lower()
 
-            if any(indicator in orig_val for indicator in template_stop_tokens) or not extracted_data.get(key):
+            if any(token in orig_val for token in template_stop_tokens) or not extracted_data.get(key):
                 merged[key] = ref_val
             elif ref_val is not None and ref_val != "" and ref_val != []:
                 merged[key] = ref_val
