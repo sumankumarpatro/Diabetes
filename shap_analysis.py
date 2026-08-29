@@ -1,14 +1,17 @@
 import argparse
 import os
 import re
+import warnings
+warnings.filterwarnings('ignore', category=RuntimeWarning)
+warnings.filterwarnings('ignore', category=UserWarning)
 from pathlib import Path
 
 import joblib
+from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shap
-from loguru import logger
 
 from config import config
 
@@ -58,13 +61,16 @@ def generate_shap_plots(mode: str):
         bert_test_path = config.TEST_BERT_EMBEDDINGS_PATH
         test_bert_dense = np.load(str(bert_test_path))
         test_bert_svd = svd_model.transform(test_bert_dense)
-        for dim in range(config.BERT_PCA_COMPONENTS):
-            df_test[f'bert_dim_{dim}'] = test_bert_svd[:, dim]
+        bert_cols = {f'bert_dim_{dim}': test_bert_svd[:, dim] for dim in range(config.BERT_PCA_COMPONENTS)}
+        df_test = pd.concat([df_test, pd.DataFrame(bert_cols, index=df_test.index)], axis=1)
 
-    # Align columns exactly as they were during training
-    X_test = pd.DataFrame(index=df_test.index)
-    for col in expected_cols:
-        X_test[col] = df_test[col] if col in df_test.columns else 0
+    # Align columns exactly as they were during training (vectorized, zero-warning)
+    missing_cols = [c for c in expected_cols if c not in df_test.columns]
+    if missing_cols:
+        df_missing = pd.DataFrame(0, index=df_test.index, columns=missing_cols)
+        df_test = pd.concat([df_test, df_missing], axis=1)
+    
+    X_test = df_test[expected_cols].copy()
 
     string_cols = X_test.select_dtypes(include=['object']).columns
     if not string_cols.empty:
@@ -125,11 +131,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode", 
         choices=["baseline", "bert", "llm_enhanced", "hybrid"], 
-        required=True, 
+        default="hybrid",
         help="Target model mode for SHAP analysis"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Generate SHAP plots for all 4 model profiles (baseline, bert, llm_enhanced, hybrid)"
     )
     args = parser.parse_args()
     import warnings
     warnings.filterwarnings("ignore")
 
-    generate_shap_plots(args.mode)
+    if args.all:
+        for m in ["baseline", "bert", "llm_enhanced", "hybrid"]:
+            logger.info(f"\n{'='*50}\nGenerating SHAP plots for: [{m.upper()}]\n{'='*50}")
+            generate_shap_plots(m)
+    else:
+        generate_shap_plots(args.mode)
