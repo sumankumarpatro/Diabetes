@@ -36,6 +36,7 @@ class ProjectConfig(BaseSettings):
     LLM_MODEL_NAME: str = "medictron-7b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_PROVIDER_TYPE: str = "ollama"
+
     BERT_MODEL_NAME: str = "emilyalsentzer/Bio_ClinicalBERT"
     BERT_EMBEDDING_DIM: int = 768
     BERT_PCA_COMPONENTS: int = 32
@@ -90,4 +91,5 @@ class ProjectConfig(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+
 config = ProjectConfig()

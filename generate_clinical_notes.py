@@ -15,6 +15,7 @@ def get_grounded_symptom_pools(row: pd.Series):
     
     affirmed_pool = []
     negated_pool = []
+
     if diag_cat == 'Circulatory':
         affirmed_pool.extend([
             "Chest discomfort aur saans lene me dikkat (dyspnea) notice ki gayi.",
@@ -67,6 +68,7 @@ def get_grounded_symptom_pools(row: pd.Series):
             "Chest pain completely absent.",
             "Koi saans phulna ya shortness of breath nahi hai."
         ])
+
     if a1c in ['>8', '>7']:
         affirmed_pool.append(f"Recent HbA1c result was elevated ({a1c}), indicating uncontrolled glycemia.")
     elif a1c == 'Norm':
@@ -121,6 +123,7 @@ def main():
         (config.TRAIN_DATA_PATH, config.TRAIN_WITH_NOTES_PATH),
         (config.TEST_DATA_PATH, config.TEST_WITH_NOTES_PATH)
     ]
+    
     random.seed(42)
     
     for input_path, output_path in tasks:
@@ -137,6 +140,7 @@ def main():
         output_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(output_path, index=False)
         logger.success(f"Saved notes dataset to: {output_path}")
+        
         sample = df['clinical_note'].iloc[0]
         logger.info(f"Sample generated note:\n{sample}\n")
 

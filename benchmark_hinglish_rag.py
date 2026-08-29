@@ -132,6 +132,7 @@ def evaluate_extraction(extracted_report, ground_truth: Dict) -> Dict:
 
     gt_affirmed = set(ground_truth.get("affirmed_symptoms", []))
     gt_negated = set(ground_truth.get("negated_symptoms", []))
+
     tp_aff = len(extracted_affirmed.intersection(gt_affirmed))
     fp_aff = len(extracted_affirmed - gt_affirmed)
     fn_aff = len(gt_affirmed - extracted_affirmed)
@@ -139,6 +140,7 @@ def evaluate_extraction(extracted_report, ground_truth: Dict) -> Dict:
     prec_aff = tp_aff / (tp_aff + fp_aff) if (tp_aff + fp_aff) > 0 else 0.0
     rec_aff = tp_aff / (tp_aff + fn_aff) if (tp_aff + fn_aff) > 0 else 0.0
     f1_aff = 2 * prec_aff * rec_aff / (prec_aff + rec_aff) if (prec_aff + rec_aff) > 0 else 0.0
+
     neg_correct = 0
     total_neg_gt = len(gt_negated)
     if total_neg_gt > 0:
@@ -148,9 +150,11 @@ def evaluate_extraction(extracted_report, ground_truth: Dict) -> Dict:
         neg_accuracy = neg_correct / total_neg_gt
     else:
         neg_accuracy = 1.0 if len(extracted_negated) == 0 else 0.0
+
     gt_glucose = ground_truth.get("glucose_status", "Unknown").lower()
     ext_glucose = str(getattr(features, 'glucose_status', 'Unknown')).lower()
     glucose_correct = 1.0 if gt_glucose in ext_glucose or ext_glucose in gt_glucose else 0.0
+
     all_gt = gt_affirmed.union(gt_negated)
     hallucinations = len((extracted_affirmed.union(extracted_negated)) - all_gt)
 
@@ -165,7 +169,9 @@ def evaluate_extraction(extracted_report, ground_truth: Dict) -> Dict:
 
 async def run_benchmark(n_samples: int = 50):
     logger.info(f"=== Initializing Code-Switched (Hinglish) Clinical Standardization Benchmark (N = {n_samples}) ===")
+    
     dataset = generate_synthetic_benchmark_dataset(n_samples=n_samples)
+
     retriever = RAGRetriever()
     retriever.load()
     provider = OllamaProvider()
@@ -175,7 +181,7 @@ async def run_benchmark(n_samples: int = 50):
     results_without_rag = []
     results_with_rag = []
 
-    logger.info("Executing Benchmark: Phase 1 (Without RAG - Zero-Shot LLM)...")
+    logger.info("Executing Benchmark: Phase 1 (Without RAG)...")
     for sample in tqdm(dataset, desc="Benchmarking Without RAG"):
         try:
             report_no_rag = await agent.orchestrate(
@@ -189,7 +195,7 @@ async def run_benchmark(n_samples: int = 50):
         except (ConnectionError, ValueError, RuntimeError) as e:
             logger.error(f"Error in sample {sample['id']} without RAG: {e}")
 
-    logger.info("Executing Benchmark: Phase 2 (With Hybrid RAG - Grounded Extraction)...")
+    logger.info("Executing Benchmark: Phase 2 (With Hybrid RAG)...")
     for sample in tqdm(dataset, desc="Benchmarking With RAG"):
         try:
             report_rag = await agent.orchestrate(
@@ -205,6 +211,7 @@ async def run_benchmark(n_samples: int = 50):
 
     await provider.close()
     retriever.close()
+
     df_no_rag = pd.DataFrame(results_without_rag)
     df_rag = pd.DataFrame(results_with_rag)
 
@@ -236,6 +243,7 @@ async def run_benchmark(n_samples: int = 50):
     }
 
     summary_df = pd.DataFrame(summary)
+    
     border = "=" * 78
     sub_border = "-" * 78
     print(f"\n{border}")
@@ -245,6 +253,7 @@ async def run_benchmark(n_samples: int = 50):
     print(f"{sub_border}")
     print(" ✅ Conclusion: Hybrid RAG provides a proven semantic bridge for code-mixed notes.")
     print(f"{border}\n")
+
     latex_output = summary_df.to_latex(index=False, caption="Code-Switched (Hinglish) Clinical Standardization Benchmark: Zero-Shot LLM vs. Hybrid RAG.", label="tab:hinglish_benchmark")
     latex_path = Path("experiments/hinglish_benchmark_table.tex")
     latex_path.parent.mkdir(parents=True, exist_ok=True)

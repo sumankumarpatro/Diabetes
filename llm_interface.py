@@ -29,11 +29,11 @@ class LLMInterface:
 
     def _parse_json_payload(self, text: str) -> Optional[Dict[str, Any]]:
         """
-        JSON parser: cleans markdown, repairs missing commas,
-        single-quotes, and unescaped characters automatically.
+        Cleans markdown, repairs missing commas, single-quotes, and unescaped characters.
         """
         try:
             cleaned = re.sub(r'```json\s*|```', '', text).strip()
+            
             start = cleaned.find('{')
             end = cleaned.rfind('}')
             
@@ -41,10 +41,12 @@ class LLMInterface:
                 return None
 
             json_str = cleaned[start:end+1]
+
             try:
                 return json.loads(json_str)
             except json.JSONDecodeError:
                 pass
+
             repaired = re.sub(r"(?<=\{|\s|,)(['\"])?([a-zA-Z0-9_]+)\1(?=\s*:)", r'"\2"', json_str)
             repaired = re.sub(r":\s*'([^']*)'", r': "\1"', repaired)
             repaired = re.sub(r'([0-9]|"|true|false|null)\s*\n\s*"', r'\1,\n"', repaired)
