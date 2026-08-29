@@ -10,6 +10,8 @@ class ProjectConfig(BaseSettings):
     """
     # Execution Mode: 'baseline', 'bert', 'llm_enhanced', or 'hybrid'
     MODE: str = Field(default="baseline")
+    # Ablation Mode: 'none', 'without_rag', 'without_negation', 'without_svd', or 'without_bert'
+    ABLATION: str = Field(default="none")
 
     # Project Paths
     PROJECT_ROOT: Path = Path(os.getcwd())
@@ -74,7 +76,9 @@ class ProjectConfig(BaseSettings):
 
     @property
     def active_model_payload_path(self) -> Path:
-        """ Returns the target model joblib path for the current MODE. """
+        """ Returns the target model joblib path for the current MODE and ABLATION. """
+        if self.ABLATION and self.ABLATION != "none":
+            return self.EXPERIMENTS_DIR / f"xgb_model_{self.MODE}_ablation_{self.ABLATION}.joblib"
         mapping = {
             "baseline": self.MODEL_PAYLOAD_PATH_BASELINE,
             "bert": self.MODEL_PAYLOAD_PATH_BERT,
