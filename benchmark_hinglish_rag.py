@@ -4,9 +4,9 @@ import json
 import re
 from pathlib import Path
 from typing import Dict, List, Tuple
+from loguru import logger
 import numpy as np
 import pandas as pd
-from loguru import logger
 from tqdm import tqdm
 
 from clinical_agent import ClinicalOrchestratorAgent
@@ -247,7 +247,7 @@ async def run_benchmark(n_samples: int = 50):
     print(" ✅ Conclusion: Hybrid RAG provides a proven semantic bridge for code-mixed notes.")
     print(f"{border}\n")
     latex_output = summary_df.to_latex(index=False, caption="Code-Switched (Hinglish) Clinical Standardization Benchmark: Zero-Shot LLM vs. Hybrid RAG.", label="tab:hinglish_benchmark")
-    latex_path = Path("Diabetes paper/hinglish_benchmark_table.tex")
+    latex_path = Path("experiments/hinglish_benchmark_table.tex")
     latex_path.parent.mkdir(parents=True, exist_ok=True)
     with open(latex_path, "w", encoding="utf-8") as f:
         f.write(latex_output)
