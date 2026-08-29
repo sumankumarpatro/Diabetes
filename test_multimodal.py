@@ -1,9 +1,12 @@
 import argparse
+import warnings
+warnings.filterwarnings('ignore', category=RuntimeWarning)
+warnings.filterwarnings('ignore', category=UserWarning)
 from pathlib import Path
 import joblib
+from loguru import logger
 import numpy as np
 import pandas as pd
-from loguru import logger
 from sklearn.metrics import (
     accuracy_score, average_precision_score, brier_score_loss,
     classification_report, f1_score, precision_score, recall_score, roc_auc_score
@@ -94,9 +97,12 @@ def evaluate_model(mode: str, ablation: str = "none"):
             test_bert_svd = svd_model.transform(test_bert_dense)
             for dim in range(config.BERT_PCA_COMPONENTS):
                 df_test[f'bert_dim_{dim}'] = test_bert_svd[:, dim]
-    X_test = pd.DataFrame(index=df_test.index)
-    for col in expected_cols:
-        X_test[col] = df_test[col] if col in df_test.columns else 0
+    missing_cols = [c for c in expected_cols if c not in df_test.columns]
+    if missing_cols:
+        df_missing = pd.DataFrame(0, index=df_test.index, columns=missing_cols)
+        df_test = pd.concat([df_test, df_missing], axis=1)
+    
+    X_test = df_test[expected_cols].copy()
 
     string_cols = X_test.select_dtypes(include=['object']).columns
     if not string_cols.empty:
