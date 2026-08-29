@@ -107,6 +107,7 @@ class ClinicalOrchestratorAgent:
 
         for key, ref_val in reflected_data.items():
             orig_val = str(extracted_data.get(key, '')).lower()
+
             if any(indicator in orig_val for indicator in template_stop_tokens) or not extracted_data.get(key):
                 merged[key] = ref_val
             elif ref_val is not None and ref_val != "" and ref_val != []:
@@ -214,7 +215,7 @@ class ClinicalOrchestratorAgent:
         generate_recs: bool = False,
         use_rag: bool = True
     ) -> Optional[ClinicalDecisionReport]:
-        """ Orchestrates RAG and LLM parsing with zero-crash fallbacks. """
+        """Extracts features and generates decision report."""
         try:
             if use_rag and self.retriever is not None:
                 context_docs = await self.retriever.retrieve(clinical_note, k=config.RETRIEVAL_K)
@@ -225,6 +226,7 @@ class ClinicalOrchestratorAgent:
                 note_with_context = f"Clinical Note: {clinical_note}"
             
             extracted_data = await self._llm_parsing(note_with_context)
+            
             if not isinstance(extracted_data, dict):
                 logger.warning("LLM JSON parsing failed; falling back to deterministic regex extraction.")
                 extracted_data = {}
@@ -233,6 +235,7 @@ class ClinicalOrchestratorAgent:
                 validated_data = await self._reflect_on_extraction(clinical_note, extracted_data)
                 if validated_data:
                     extracted_data = self._merge_reflected_data(extracted_data, validated_data)
+
             hospital_stay_days = extracted_data.get("hospital_stay_days") or self._extract_hospital_stay_days(clinical_note)
             medication_count = extracted_data.get("medication_count") or self._extract_medication_count(clinical_note)
             condition_status = self._extract_condition_status(clinical_note) or extracted_data.get("condition_status", "Unknown")
