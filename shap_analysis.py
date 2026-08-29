@@ -51,6 +51,7 @@ def generate_shap_plots(mode: str):
     pipeline = payload['model']
     expected_cols = payload['feature_cols']
     svd_model = payload.get('svd_model', None)
+    
     test_path = config.active_test_path
     logger.info(f"Loading independent test data from: {test_path}")
     df_test = pd.read_csv(test_path)
@@ -58,6 +59,7 @@ def generate_shap_plots(mode: str):
     symptom_cols = [c for c in df_test.columns if c.startswith('symptom_')]
     if symptom_cols:
         df_test[symptom_cols] = df_test[symptom_cols].fillna(0).astype(int)
+        
     if mode in ["bert", "hybrid"] and svd_model:
         bert_test_path = config.TEST_BERT_EMBEDDINGS_PATH
         test_bert_dense = np.load(str(bert_test_path))
@@ -65,7 +67,6 @@ def generate_shap_plots(mode: str):
         bert_cols = {f'bert_dim_{dim}': test_bert_svd[:, dim] for dim in range(config.BERT_PCA_COMPONENTS)}
         df_test = pd.concat([df_test, pd.DataFrame(bert_cols, index=df_test.index)], axis=1)
 
-    # Align columns exactly as they were during training (vectorized, zero-warning)
     missing_cols = [c for c in expected_cols if c not in df_test.columns]
     if missing_cols:
         df_missing = pd.DataFrame(0, index=df_test.index, columns=missing_cols)
@@ -76,36 +77,38 @@ def generate_shap_plots(mode: str):
     string_cols = X_test.select_dtypes(include=['object']).columns
     if not string_cols.empty:
         X_test[string_cols] = X_test[string_cols].astype(str)
+
     logger.info("Applying preprocessing transformations...")
     preprocessor = pipeline.named_steps['preprocessor']
     X_test_transformed = preprocessor.transform(X_test)
     
-    # Extract clean feature names
     try:
         raw_feature_names = preprocessor.get_feature_names_out()
     except Exception:
-        # Fallback if get_feature_names_out fails
         raw_feature_names = X_test.columns
         
     feature_names = clean_feature_names(raw_feature_names)
-
-    # Convert to DataFrame for SHAP
     X_test_transformed_df = pd.DataFrame(X_test_transformed, columns=feature_names)
+    
     sample_size = min(2500, len(X_test_transformed_df))
     X_sample = X_test_transformed_df.sample(n=sample_size, random_state=42)
+    
     logger.info(f"Calculating SHAP values for {sample_size} test samples...")
     xgb_model = pipeline.named_steps['classifier']
     explainer = shap.TreeExplainer(xgb_model)
     shap_values = explainer(X_sample)
+
     out_dir = config.PROJECT_ROOT / "plots" / mode
     out_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Generating SHAP Bar Plot (Global Importance)...")
+
+    logger.info("Generating SHAP Bar Plot...")
     plt.figure(figsize=(10, 8))
     shap.summary_plot(shap_values, X_sample, plot_type="bar", show=False, max_display=15)
     plt.title(f"Top 15 Predictors of 30-Day Readmission ({mode.upper()})", fontsize=14, pad=20)
     plt.tight_layout()
     plt.savefig(out_dir / f"shap_bar_{mode}.png", dpi=300, bbox_inches='tight')
     plt.close()
+
     logger.info("Generating SHAP Summary Dot Plot...")
     plt.figure(figsize=(10, 8))
     shap.summary_plot(shap_values, X_sample, show=False, max_display=15)
@@ -113,8 +116,8 @@ def generate_shap_plots(mode: str):
     plt.tight_layout()
     plt.savefig(out_dir / f"shap_summary_{mode}.png", dpi=300, bbox_inches='tight')
     plt.close()
-    logger.info("Generating SHAP Waterfall Plot for a high-risk patient...")
-    # Find a patient with a high risk score
+
+    logger.info("Generating SHAP Waterfall Plot...")
     probs = xgb_model.predict_proba(X_sample)[:, 1]
     high_risk_idx = np.argmax(probs)
     

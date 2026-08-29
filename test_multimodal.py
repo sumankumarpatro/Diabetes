@@ -50,11 +50,11 @@ def evaluate_model(mode: str, ablation: str = "none"):
     threshold = payload['threshold']
     svd_model = payload.get('svd_model', None)
     expected_cols = payload['feature_cols']
+
     test_path = config.active_test_path
     logger.info(f"Loading independent test data from: {test_path}")
     df_test = pd.read_csv(test_path)
 
-    # Apply Ablation Transformations to test set if needed
     if ablation == "without_negation":
         logger.info("Applying Ablation: Merging test affirmed and negated symptom flags into single presence flags...")
         symptom_affirmed_cols = [c for c in df_test.columns if c.startswith('symptom_') and c.endswith('_affirmed')]
@@ -81,6 +81,7 @@ def evaluate_model(mode: str, ablation: str = "none"):
 
     exclude_cols = ['clinical_note', 'index', 'split', 'id', 'patient_id', 'encounter_id', 'patient_nbr', 'readmitted_binary']
     df_test = df_test.drop(columns=[c for c in exclude_cols if c in df_test.columns], errors='ignore')
+
     if mode in ["bert", "hybrid"] and ablation != "without_bert":
         bert_test_path = config.TEST_BERT_EMBEDDINGS_PATH
         if not bert_test_path.exists():

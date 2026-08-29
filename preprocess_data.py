@@ -18,7 +18,9 @@ def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Loading raw dataset from: {data_path}")
     df = pd.read_csv(data_path)
+    
     df.replace('?', np.nan, inplace=True)
+    
     if 'readmitted' in df.columns:
         df['readmitted_binary'] = df['readmitted'].apply(lambda x: 1 if str(x).strip() == '<30' else 0)
         df.drop(columns=['readmitted'], inplace=True)
@@ -26,7 +28,9 @@ def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
     else:
         logger.error("Target column 'readmitted' not found in dataset.")
         return
+
     logger.info("Performing feature engineering...")
+    
     med_cols = [
         'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride', 
         'acetohexamide', 'glipizide', 'glyburide', 'tolbutamide', 'pioglitazone', 
@@ -36,10 +40,10 @@ def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
     ]
     existing_med_cols = [c for c in med_cols if c in df.columns]
     if existing_med_cols:
-        # Check for active meds: string not in ['no', 'nan']
         active_meds = df[existing_med_cols].apply(lambda col: col.astype(str).str.lower().isin(['steady', 'up', 'down'])).astype(int)
         df['total_medications_count'] = active_meds.sum(axis=1)
         logger.info(f"Engineered 'total_medications_count' using {len(existing_med_cols)} columns.")
+        
     if 'age' in df.columns:
         try:
             df['age_numeric'] = df['age'].str.extract(r'\[?(\d+)-').astype(float)
@@ -51,6 +55,7 @@ def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
             logger.info("Engineered 'age_group'.")
         except Exception as e:
             logger.warning(f"Failed to bin age: {e}")
+            
     if 'number_diagnoses' in df.columns and 'num_procedures' in df.columns:
         df['clinical_complexity_score'] = df['number_diagnoses'] + df['num_procedures']
         logger.info("Engineered 'clinical_complexity_score'.")
@@ -58,10 +63,12 @@ def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
     if 'number_inpatient' in df.columns and 'number_diagnoses' in df.columns:
         df['heavy_utilizer_score'] = df['number_inpatient'] * df['number_diagnoses']
         logger.info("Engineered 'heavy_utilizer_score'.")
+
     if 'diabetesMed' in df.columns:
         df['diabetesMed_binary'] = df['diabetesMed'].apply(lambda x: 1 if str(x).strip().lower() == 'yes' else 0)
         df.drop(columns=['diabetesMed'], inplace=True)
         logger.info("Binarized 'diabetesMed'.")
+        
     target_col = 'readmitted_binary'
     if 'patient_nbr' in df.columns:
         logger.info("Splitting data by patient_nbr (GroupShuffleSplit)...")
@@ -72,6 +79,7 @@ def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
     else:
         logger.info("Splitting data with stratified train_test_split...")
         train_val_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df[target_col])
+
     cols_to_drop = [
         'encounter_id', 'patient_nbr', 'payer_code', 
         'admission_type_id', 'discharge_disposition_id', 'admission_source_id'

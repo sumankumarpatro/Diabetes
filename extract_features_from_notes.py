@@ -11,6 +11,7 @@ from llm_providers import OllamaProvider
 from rag_retriever import RAGRetriever
 from clinical_agent import ClinicalOrchestratorAgent
 from config import config
+
 CONCURRENT_REQUESTS = 6
 
 def standardize_categorical_fields(feature_dict: dict) -> dict:
@@ -26,6 +27,7 @@ def standardize_categorical_fields(feature_dict: dict) -> dict:
         feature_dict['llm_glucose_status'] = 'Normoglycemia'
     else:
         feature_dict['llm_glucose_status'] = 'Unknown'
+        
     age = str(feature_dict.get('llm_age_group', '')).strip().lower()
     if 'adult' in age:
         feature_dict['llm_age_group'] = 'Adult'
@@ -41,7 +43,6 @@ def standardize_categorical_fields(feature_dict: dict) -> dict:
 async def process_row_async(sem, agent, index, note, prior_readmission_indicator):
     """
     Processes a single row using non-blocking async semantics.
-    Bypasses recommendation generation to maximize throughput.
     """
     async with sem:
         try:
@@ -60,6 +61,7 @@ async def process_row_async(sem, agent, index, note, prior_readmission_indicator
                 'llm_has_symptoms': 1 if (hasattr(features, 'symptoms') and len(features.symptoms) > 0) else 0,
                 'llm_age_group': getattr(features, 'age_group', 'Unknown')
             }
+
             if hasattr(features, 'symptoms') and features.symptoms:
                 for symptom_obj in features.symptoms:
                     s_name = symptom_obj.name.lower().replace(" ", "_").strip()
@@ -96,10 +98,10 @@ async def extract_features_from_dataset_async(sem, input_path: Path, output_path
     logger.info(f"Loading dataset from: {input_path}")
     df = pd.read_csv(input_path)
     
-    # Establish streaming checkpoint path
     checkpoint_path = output_path.with_suffix('.jsonl')
     processed_indices = set()
     checkpoint_results = {}
+
     if checkpoint_path.exists():
         logger.info(f"Found existing checkpoint file: {checkpoint_path}. Resuming...")
         try:
@@ -115,11 +117,13 @@ async def extract_features_from_dataset_async(sem, input_path: Path, output_path
             logger.warning(f"Failed to parse checkpoint ({e}). Starting fresh.")
             processed_indices = set()
             checkpoint_results = {}
+
     provider = OllamaProvider()
     llm = LLMInterface(provider)
     retriever = RAGRetriever()
     retriever.load()
     agent = ClinicalOrchestratorAgent(retriever, llm)
+
     tasks = []
     for index, row in df.iterrows():
         if index in processed_indices:
@@ -133,24 +137,30 @@ async def extract_features_from_dataset_async(sem, input_path: Path, output_path
         logger.info(f"All records in {input_path.name} are already complete in checkpoint.")
     else:
         logger.info(f"Starting async extraction for {total_tasks} remaining rows (Concurrency: {CONCURRENT_REQUESTS}).")
+        
         with open(checkpoint_path, 'a', encoding='utf-8') as cp_file:
             for future in tqdm(asyncio.as_completed(tasks), total=total_tasks, desc=f"Extracting {input_path.name}"):
                 index, feature_dict = await future
                 checkpoint_results[index] = feature_dict
+                
                 checkpoint_record = {'index': index, **feature_dict}
                 cp_file.write(json.dumps(checkpoint_record) + '\n')
                 cp_file.flush()
+
     logger.info("Compiling final ordered dataset structure...")
     sorted_indices = sorted(checkpoint_results.keys())
     ordered_features = [checkpoint_results[idx] for idx in sorted_indices]
     features_df = pd.DataFrame(ordered_features)
+
     symptom_cols = [c for c in features_df.columns if c.startswith('symptom_')]
     if symptom_cols:
         features_df[symptom_cols] = features_df[symptom_cols].fillna(0).astype(int)
+    
     final_df = pd.concat([df.loc[sorted_indices].reset_index(drop=True), features_df.reset_index(drop=True)], axis=1)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     final_df.to_csv(output_path, index=False)
+
     if checkpoint_path.exists():
         checkpoint_path.unlink()
         logger.info(f"Cleaned up checkpoint cache: {checkpoint_path}")
@@ -162,7 +172,6 @@ async def extract_features_from_dataset_async(sem, input_path: Path, output_path
 def harmonize_train_test_columns(train_path: Path, test_path: Path):
     """
     Aligns symptom feature columns between train and test datasets.
-    Prevents XGBoost shape/feature mismatch errors.
     """
     logger.info("Harmonizing feature columns between Train and Test splits...")
     if not train_path.exists() or not test_path.exists():
@@ -172,7 +181,6 @@ def harmonize_train_test_columns(train_path: Path, test_path: Path):
     train_df = pd.read_csv(train_path)
     test_df = pd.read_csv(test_path)
 
-    # Find union of all dynamic symptom columns
     all_symptom_cols = sorted(list(set(
         [c for c in train_df.columns if c.startswith('symptom_')] +
         [c for c in test_df.columns if c.startswith('symptom_')]
@@ -183,8 +191,10 @@ def harmonize_train_test_columns(train_path: Path, test_path: Path):
             train_df[col] = 0
         if col not in test_df.columns:
             test_df[col] = 0
+
     train_df[all_symptom_cols] = train_df[all_symptom_cols].fillna(0).astype(int)
     test_df[all_symptom_cols] = test_df[all_symptom_cols].fillna(0).astype(int)
+
     base_cols = [c for c in train_df.columns if not c.startswith('symptom_')]
     aligned_column_order = base_cols + all_symptom_cols
 
@@ -202,6 +212,7 @@ async def main():
     test_input = config.TEST_WITH_NOTES_PATH
     output_train = config.TRAIN_WITH_EXTRACTED_FEATURES_PATH
     output_test = config.TEST_WITH_EXTRACTED_FEATURES_PATH
+
     await extract_features_from_dataset_async(sem, train_input, output_train)
     await extract_features_from_dataset_async(sem, test_input, output_test)
     harmonize_train_test_columns(output_train, output_test)

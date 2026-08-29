@@ -90,6 +90,7 @@ def extract_embeddings_for_dataset(
 
     dense_matrix = np.vstack(all_embeddings)
     logger.info(f"Dense embedding shape: {dense_matrix.shape} (Expected: ({total_notes}, {config.BERT_EMBEDDING_DIM}))")
+
     if dense_matrix.shape[0] != total_notes:
         raise ValueError(f"Shape mismatch! Expected {total_notes} rows, got {dense_matrix.shape[0]}")
 
@@ -110,6 +111,7 @@ def main():
     logger.info(f"Loading pretrained tokenizer & model: {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name).to(device)
+
     logger.info("=== Extracting Train Set Dense Embeddings ===")
     extract_embeddings_for_dataset(
         csv_path=config.TRAIN_WITH_NOTES_PATH,
@@ -120,6 +122,7 @@ def main():
         batch_size=args.batch_size,
         max_length=args.max_length
     )
+
     logger.info("=== Extracting Test Set Dense Embeddings ===")
     extract_embeddings_for_dataset(
         csv_path=config.TEST_WITH_NOTES_PATH,
