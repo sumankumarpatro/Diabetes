@@ -18,6 +18,7 @@ def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
     if not kb_path.exists():
         logger.error(f"Knowledge base directory not found at: {kb_path}")
         return
+
     raw_documents = []
     document_metadata = []
 
@@ -39,6 +40,7 @@ def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
         return
 
     logger.info(f"Loaded {len(raw_documents)} medical knowledge source files from: {kb_path}")
+
     chunk_size = 500
     chunk_overlap = 50
     documents = []
@@ -55,9 +57,11 @@ def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
             start += (chunk_size - chunk_overlap)
 
     logger.info(f"Generated {len(documents)} overlapping knowledge chunks.")
+
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     logger.info(f"Loading embedding model ({config.RETRIEVER_MODEL_NAME}) on device: {device}")
     model = SentenceTransformer(config.RETRIEVER_MODEL_NAME, device=device)
+
     logger.info("Computing dense vectors for knowledge chunks...")
     embeddings = model.encode(
         documents,
@@ -67,9 +71,11 @@ def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
     ).astype("float32")
 
     dimension = embeddings.shape[1]
+
     logger.info(f"Building FAISS IndexFlatL2 with dimension {dimension}...")
     index = faiss.IndexFlatL2(dimension)
     index.add(embeddings)
+
     index_path.parent.mkdir(parents=True, exist_ok=True)
     faiss.write_index(index, str(index_path))
 

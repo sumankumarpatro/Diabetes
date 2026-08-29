@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import warnings
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=UserWarning)
 warnings.simplefilter(action='ignore', category=DeprecationWarning)
@@ -103,9 +104,10 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
     config.ABLATION = ablation
     ablation_str = f" [ABLATION: {ablation.upper()}]" if ablation != "none" else ""
     logger.info(f"=== Starting Training Pipeline: Mode [{mode.upper()}]{ablation_str} ===")
+    
     if mode in ["baseline", "bert"]:
         data_path = config.TRAIN_DATA_PATH if mode == "baseline" else config.TRAIN_WITH_NOTES_PATH
-    else:  # 'llm_enhanced' or 'hybrid'
+    else:
         data_path = config.TRAIN_WITH_EXTRACTED_FEATURES_PATH
 
     if not data_path.exists():
@@ -115,9 +117,8 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
     logger.info(f"Loading data from: {data_path}")
     df = pd.read_csv(data_path)
 
-    # Apply Ablation Transformations
     if ablation == "without_negation":
-        logger.info("Applying Ablation: Merging affirmed and negated symptom flags into single presence flags...")
+        logger.info("Applying Ablation: Merging affirmed and negated symptom flags...")
         symptom_affirmed_cols = [c for c in df.columns if c.startswith('symptom_') and c.endswith('_affirmed')]
         for aff_col in symptom_affirmed_cols:
             base_symptom = aff_col.replace('_affirmed', '')
@@ -129,7 +130,6 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
                 df[base_symptom] = df[aff_col].fillna(0).astype(int)
                 df.drop(columns=[aff_col], inplace=True)
 
-    # Align symptom columns if present
     symptom_cols = [c for c in df.columns if c.startswith('symptom_')]
     if symptom_cols:
         df[symptom_cols] = df[symptom_cols].fillna(0).astype(int)
@@ -143,6 +143,7 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
     X = df.drop(columns=[c for c in exclude_cols if c in df.columns], errors='ignore')
     X = df.drop(columns=[target_col], errors='ignore')
     y = df[target_col]
+
     svd_model = None
     if mode in ["bert", "hybrid"] and ablation != "without_bert":
         bert_path = config.TRAIN_BERT_EMBEDDINGS_PATH
@@ -154,12 +155,11 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
         bert_dense = np.load(str(bert_path))
 
         if ablation == "without_svd":
-            logger.info("Applying Ablation: Passing Raw Uncompressed BERT Dimensions (Testing Accuracy Paradox)...")
+            logger.info("Applying Ablation: Passing Raw Uncompressed BERT Dimensions...")
             n_raw_dims = min(128, bert_dense.shape[1])
             for dim in range(n_raw_dims):
                 X[f'bert_dim_{dim}'] = bert_dense[:, dim]
         else:
-            # Dimensionality Reduction for optimal tree split balance (32 components)
             logger.info(f"Fitting TruncatedSVD (768 -> {config.BERT_PCA_COMPONENTS} components)...")
             svd_model = TruncatedSVD(n_components=config.BERT_PCA_COMPONENTS, random_state=42)
             bert_svd = svd_model.fit_transform(bert_dense)
@@ -167,10 +167,10 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
             for dim in range(config.BERT_PCA_COMPONENTS):
                 X[f'bert_dim_{dim}'] = bert_svd[:, dim]
 
-    # Ensure categorical string types
     string_cols = X.select_dtypes(include=['object']).columns
     if not string_cols.empty:
         X[string_cols] = X[string_cols].astype(str)
+
     X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
@@ -186,6 +186,7 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
     logger.info(f"Tabular Numeric: {len(numeric_cols)} | Categorical: {len(categorical_cols)} | Dense BERT: {len(bert_cols)}")
     
     preprocessor = build_preprocessor(numeric_cols, categorical_cols, bert_cols=bert_cols)
+
     n_trials = 30
     logger.info(f"Starting Hyperparameter Tuning ({n_trials} trials, AUPRC scoring)...")
 
@@ -216,12 +217,14 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
     study = optuna.create_study(direction='maximize')
     study.optimize(objective, n_trials=n_trials, callbacks=[callback])
     logger.success(f"Best parameters: {study.best_params}")
+
     final_clf = build_classifier()
     final_pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', final_clf)])
     final_pipeline.set_params(**study.best_params)
 
     logger.info("Fitting final pipeline on training set...")
     final_pipeline.fit(X_train, y_train)
+
     val_probs = final_pipeline.predict_proba(X_val)[:, 1]
     calibrated_threshold = calibrate_clinical_threshold(y_val, val_probs)
 
@@ -233,6 +236,7 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
     logger.info(f"Validation Precision    : {validation_results['precision']:.4f}")
     logger.info(f"Validation F2 Score     : {validation_results['f2']:.4f}")
     logger.info(f"Calibrated Threshold    : {calibrated_threshold:.4f}")
+
     if ablation != "none":
         output_payload_path = config.EXPERIMENTS_DIR / f"xgb_model_{mode}_ablation_{ablation}.joblib"
     else:
