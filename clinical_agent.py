@@ -211,13 +211,18 @@ class ClinicalOrchestratorAgent:
         clinical_note: str, 
         readmission_prediction: Optional[bool] = None, 
         skip_reflection: bool = True,
-        generate_recs: bool = False
+        generate_recs: bool = False,
+        use_rag: bool = True
     ) -> Optional[ClinicalDecisionReport]:
         """ Orchestrates RAG and LLM parsing with zero-crash fallbacks. """
         try:
-            context_docs = await self.retriever.retrieve(clinical_note, k=config.RETRIEVAL_K)
-            context_text = "\n".join(str(doc) for doc in context_docs)
-            note_with_context = f"Clinical Note: {clinical_note}\n\nMedical Context: {context_text}"
+            if use_rag and self.retriever is not None:
+                context_docs = await self.retriever.retrieve(clinical_note, k=config.RETRIEVAL_K)
+                context_text = "\n".join(str(doc) for doc in context_docs)
+                note_with_context = f"Clinical Note: {clinical_note}\n\nMedical Context: {context_text}"
+            else:
+                context_text = ""
+                note_with_context = f"Clinical Note: {clinical_note}"
             
             extracted_data = await self._llm_parsing(note_with_context)
             if not isinstance(extracted_data, dict):
