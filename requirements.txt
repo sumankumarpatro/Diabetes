@@ -5,9 +5,15 @@ sentence-transformers
 faiss-cpu
 numpy
 pandas
+shap
+matplotlib
+questionary
 ollama
 scikit-learn
 xgboost
+optuna
+imbalanced-learn
+joblib
 loguru
 tenacity
 pydantic
@@ -15,3 +21,4 @@ pydantic-settings
 peft
 accelerate
 huggingface_hub
+rank_bm25

@@ -1,81 +1,93 @@
-from loguru import logger
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 import os
-from config import config
 from pathlib import Path
+from loguru import logger
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
+from config import config
 
-def preprocess_diabetes_data(data_path: str, output_dir: str) -> None:
+def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
     """
-    Preprocesses the diabetes dataset: cleaning, imputation, and encoding.
+    Preprocesses the diabetes dataset: cleaning and advanced feature engineering.
+    Preserves all feature logic while ensuring leakage-free patient splitting.
     """
-    input_path = Path(data_path)
-    output_path = Path(output_dir)
-
-    if not input_path.exists():
+    if not data_path.exists():
         logger.error(f"Input data not found: {data_path}")
         return
-
-    if not output_path.exists():
-        output_path.mkdir(parents=True, exist_ok=True)
-
-    logger.info(f"Loading data from: {data_path}")
+        
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Loading raw dataset from: {data_path}")
     df = pd.read_csv(data_path)
     df.replace('?', np.nan, inplace=True)
-    cols_to_drop = ['encounter_id', 'patient_nbr', 'payer_code']
-    existing_drops = [c for c in cols_to_drop if c in df.columns]
-    df.drop(columns=existing_drops, inplace=True)
-    logger.info(f"Dropped columns: {existing_drops}")
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    for col in numeric_cols:
-        df[col] = df[col].fillna(df[col].median())
-
-    categorical_cols = df.select_dtypes(include=['object']).columns
-    for col in categorical_cols:
-        modes = df[col].mode()
-        if not modes.empty:
-            df[col] = df[col].fillna(modes[0])
-        else:
-            df[col] = df[col].fillna("Unknown")
     if 'readmitted' in df.columns:
-        df['readmitted_binary'] = df['readmitted'].apply(lambda x: 1 if x == '>30' else 0)
+        df['readmitted_binary'] = df['readmitted'].apply(lambda x: 1 if str(x).strip() == '<30' else 0)
+        df.drop(columns=['readmitted'], inplace=True)
+        logger.info("Encoded 'readmitted' to 'readmitted_binary'.")
     else:
         logger.error("Target column 'readmitted' not found in dataset.")
         return
-    le = LabelEncoder()
-    # We want to encode all categorical columns except the original target 'readmitted'
-    cols_to_encode = [col for col in categorical_cols if col != 'readmitted']
-    
-    for col in cols_to_encode:
-        df[col] = le.fit_transform(df[col].astype(str))
-    # Features: everything except the original target and the new binary target
-    cols_to_exclude = ['readmitted', 'readmitted_binary']
-    X = df.drop(columns=[c for c in cols_to_exclude if c in df.columns])
-    y = df['readmitted_binary']
+    logger.info("Performing feature engineering...")
+    med_cols = [
+        'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride', 
+        'acetohexamide', 'glipizide', 'glyburide', 'tolbutamide', 'pioglitazone', 
+        'rosiglitazone', 'acarbose', 'miglitol', 'troglitazone', 'tolazamide', 
+        'examide', 'citoglipton', 'insulin', 'glyburide-metformin', 'glipizide-metformin', 
+        'glime_pioglitazone', 'metformin-rosiglitazone', 'metformin-pioglitazone'
+    ]
+    existing_med_cols = [c for c in med_cols if c in df.columns]
+    if existing_med_cols:
+        # Check for active meds: string not in ['no', 'nan']
+        active_meds = df[existing_med_cols].apply(lambda col: col.astype(str).str.lower().isin(['steady', 'up', 'down'])).astype(int)
+        df['total_medications_count'] = active_meds.sum(axis=1)
+        logger.info(f"Engineered 'total_medications_count' using {len(existing_med_cols)} columns.")
+    if 'age' in df.columns:
+        try:
+            df['age_numeric'] = df['age'].str.extract(r'\[?(\d+)-').astype(float)
+            bins = [0, 18, 35, 50, 65, 80, 120]
+            labels = ['Pediatric', 'Young Adult', 'Adult', 'Middle-Aged', 'Senior', 'Elderly']
+            df['age_group'] = pd.cut(df['age_numeric'], bins=bins, labels=labels, right=False)
+            df['age_group'] = df['age_group'].astype(str).fillna('Unknown')
+            df.drop(columns=['age_numeric'], inplace=True)
+            logger.info("Engineered 'age_group'.")
+        except Exception as e:
+            logger.warning(f"Failed to bin age: {e}")
+    if 'number_diagnoses' in df.columns and 'num_procedures' in df.columns:
+        df['clinical_complexity_score'] = df['number_diagnoses'] + df['num_procedures']
+        logger.info("Engineered 'clinical_complexity_score'.")
 
-    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
-    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp)
-    train_path = output_path / 'train.csv'
-    val_path = output_path / 'val.csv'
-    test_path = output_path / 'test.csv'
-
-    # Re-attach target for the saved CSVs
-    pd.concat([X_train, y_train], axis=1).to_csv(train_path, index=False)
+    if 'number_inpatient' in df.columns and 'number_diagnoses' in df.columns:
+        df['heavy_utilizer_score'] = df['number_inpatient'] * df['number_diagnoses']
+        logger.info("Engineered 'heavy_utilizer_score'.")
+    if 'diabetesMed' in df.columns:
+        df['diabetesMed_binary'] = df['diabetesMed'].apply(lambda x: 1 if str(x).strip().lower() == 'yes' else 0)
+        df.drop(columns=['diabetesMed'], inplace=True)
+        logger.info("Binarized 'diabetesMed'.")
+    target_col = 'readmitted_binary'
+    if 'patient_nbr' in df.columns:
+        logger.info("Splitting data by patient_nbr (GroupShuffleSplit)...")
+        gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+        train_idx, test_idx = next(gss.split(df, df[target_col], groups=df['patient_nbr']))
+        train_val_df = df.iloc[train_idx].copy()
+        test_df = df.iloc[test_idx].copy()
+    else:
+        logger.info("Splitting data with stratified train_test_split...")
+        train_val_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df[target_col])
+    cols_to_drop = [
+        'encounter_id', 'patient_nbr', 'payer_code', 
+        'admission_type_id', 'discharge_disposition_id', 'admission_source_id'
+    ]
+    existing_drops = [c for c in cols_to_drop if c in df.columns]
+    train_val_df.drop(columns=existing_drops, inplace=True, errors='ignore')
+    test_df.drop(columns=existing_drops, inplace=True, errors='ignore')
     
-    pd.concat([X_val, y_val], axis=1).to_csv(val_path, index=False)
+    train_output_file = config.TRAIN_DATA_PATH
+    test_output_file = config.TEST_DATA_PATH
     
-    pd.concat([X_test, y_test], axis=1).to_csv(test_path, index=False)
-
-    logger.success(f"Preprocessing complete. Files saved in {output_dir}")
-    logger.info(f"Train size: {len(X_train)}, Val size: {len(X_val)}, Test size: {len(X_test)}")
-    logger.info(f"Class distribution (binary): \n{y.value_counts(normalize=True)}")
+    train_val_df.to_csv(train_output_file, index=False)
+    test_df.to_csv(test_output_file, index=False)
+    
+    logger.success(f"Train data saved: {train_output_file} ({len(train_val_df)} records)")
+    logger.success(f"Test data saved: {test_output_file} ({len(test_df)} records)")
 
 if __name__ == "__main__":
-    # Use paths from config for consistency
-    # Use the RAW_DATA_PATH from config as the source of truth
-    DATA_PATH = config.RAW_DATA_PATH
-    OUTPUT_DIR = str(config.PROCESSED_DIR)
-    
-    preprocess_diabetes_data(str(DATA_PATH), OUTPUT_DIR)
+    preprocess_diabetes_data(config.RAW_DATA_PATH, config.PROCESSED_DIR)

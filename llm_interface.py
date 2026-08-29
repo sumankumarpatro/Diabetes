@@ -1,73 +1,59 @@
-from loguru import logger
 import json
 import re
 from typing import Any, Dict, Optional
-from llm_providers import LLMProvider, OllamaProvider
+from loguru import logger
+from llm_providers import LLMProvider
 
 class LLMInterface:
-    """
-    A wrapper around LLM providers to provide a consistent interface.
-    """
     def __init__(self, provider: LLMProvider):
         self.provider = provider
-        logger.info(f"[LLMInterface] Initialized with provider: {type(self.provider).__name__}")
 
-    def generate_structured_json(self, prompt: str, schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Delegates the JSON generation to the underlying provider and performs robust extraction.
-        """
+    async def generate_structured_json(self, prompt: str, schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            raw_response = self.provider.generate_structured_json(prompt, schema)
+            raw_response = await self.provider.generate_structured_json(prompt, schema)
             if not raw_response:
                 return None
-
-            # If the provider returned a string instead of a dict, try to parse it
             if isinstance(raw_response, str):
                 return self._parse_json_payload(raw_response)
-            
             return raw_response
         except Exception as e:
-            logger.error(f"[LLMInterface] Error during JSON generation: {e}")
+            logger.error(f"[LLMInterface] JSON generation error: {e}")
+            return None
+
+    async def generate_text(self, prompt: str) -> Optional[str]:
+        try:
+            return await self.provider.generate_text(prompt)
+        except Exception as e:
+            logger.error(f"[LLMInterface] Text generation error: {e}")
             return None
 
     def _parse_json_payload(self, text: str) -> Optional[Dict[str, Any]]:
         """
-        Uses regex to find and parse the first JSON object in a string.
-        Handles potential markdown code blocks.
+        Robust JSON parser: cleans markdown, repairs missing commas,
+        single-quotes, and unescaped characters automatically.
         """
         try:
-            # Debug: print the text that we are trying to parse
-            logger.debug(f"[LLMInterface] Attempting to parse text: {text[:500]}...")
+            cleaned = re.sub(r'```json\s*|```', '', text).strip()
+            start = cleaned.find('{')
+            end = cleaned.rfind('}')
             
-            # Remove markdown code block markers if present
-            text = re.sub(r'```json\s*|```', '', text).strip()
-            
-            # Regex to find content between the first '{' and the last '}'
-            match = re.search(r'(\{.*\})', text, re.DOTALL)
-            if match:
-                json_str = match.group(1)
-                return json.loads(json_str)
-            else:
-                logger.error(f"[LLMInterface] No JSON object found in response text: {text[:100]}...")
+            if start == -1 or end == -1 or end <= start:
                 return None
-        except json.JSONDecodeError as e:
-            logger.error(f"[LLMInterface] JSON decode error: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"[LLMInterface] Failed to parse JSON from text: {e}")
-            return None
 
-if __name__ == "__main__":
-    # Quick test with Ollama
-    try:
-        ollama_provider = OllamaProvider()
-        interface = LLMInterface(provider=ollama_provider)
-        
-        test_prompt = "Patient age 25, symptoms: fever and headache."
-        test_schema = {"age": "int", "symptoms": "list"}
-        
-        logger.info("Testing Ollama LLM Interface...")
-        result = interface.generate_structured_json(test_prompt, test_schema)
-        logger.info(f"Result: {result}")
-    except Exception as e:
-        logger.error(f"Test failed: {e}")
+            json_str = cleaned[start:end+1]
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+            repaired = re.sub(r"(?<=\{|\s|,)(['\"])?([a-zA-Z0-9_]+)\1(?=\s*:)", r'"\2"', json_str)
+            repaired = re.sub(r":\s*'([^']*)'", r': "\1"', repaired)
+            repaired = re.sub(r'([0-9]|"|true|false|null)\s*\n\s*"', r'\1,\n"', repaired)
+            repaired = re.sub(r'}\s*\n\s*{', r'},\n{', repaired)
+            repaired = re.sub(r']\s*\n\s*"', r'],\n"', repaired)
+            repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+
+            return json.loads(repaired)
+
+        except Exception as e:
+            logger.debug(f"[LLMInterface] Final JSON repair failed: {e}")
+            return None
