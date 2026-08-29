@@ -101,6 +101,7 @@ class RAGRetriever:
 
         if not candidate_indices:
             return []
+
         query_embedding = self.model.encode([query], convert_to_numpy=True).astype("float32")
         search_k = min(k * 4, len(self.documents))
         distances, indices = self.index.search(query_embedding, search_k)
@@ -110,15 +111,18 @@ class RAGRetriever:
             for idx in indices[0]
             if idx < len(self.documents) and idx in candidate_indices
         ]
+
         bm25_retrieved_docs = []
         if self.bm25:
             tokenized_query = query.lower().split()
             bm25_scores = self.bm25.get_scores(tokenized_query)
             bm25_top_indices = np.argsort(bm25_scores)[::-1][:config.BM25_K]
             bm25_retrieved_docs = [self.corpus[idx] for idx in bm25_top_indices if idx < len(self.corpus)]
+
         combined_docs = list(dict.fromkeys(dense_retrieved_docs + bm25_retrieved_docs))
         if not combined_docs:
             return []
+
         if self.reranker and combined_docs:
             pairs = [[query, doc] for doc in combined_docs]
             scores = self.reranker.predict(pairs)
