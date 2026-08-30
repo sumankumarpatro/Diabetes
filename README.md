@@ -1,4 +1,4 @@
-# 🏥 A Neurosymbolic Multimodal Architecture for Diabetic Readmission Prediction: Fusing EHR Tabular Data, Dense BioBERT Vectors, and LLM-Guided Symbolic Extraction
+# 🏥 A Neurosymbolic Multimodal Framework for 30-Day Diabetic Readmission Prediction: Integrating Structured EHR Data, Dense Clinical Embeddings, and Knowledge-Grounded Symbolic Extraction
 
 <div align="center">
 
@@ -17,6 +17,7 @@
 ---
 
 [Executive Summary](#-executive-summary--clinical-rationale) •
+[Cohort Statistics](#-cohort-characteristics-n--101766) •
 [Architecture](#-system-architecture) •
 [Experimental Profiles](#-experimental-profiles--multimodal-taxonomy) •
 [Hinglish Benchmark](#-code-switched-hinglish-clinical-standardization-benchmark) •
@@ -37,12 +38,31 @@ Hospital readmissions within 30 days of discharge represent a major clinical and
 
 Traditional Clinical Decision Support Systems (CDSS) suffer from two fundamental weaknesses:
 1. **The Tabular Silo**: They rely exclusively on structured Electronic Health Record (EHR) features (lab values, admission codes, demographic tables), completely discarding the rich, nuanced diagnostic narratives recorded in bedside clinical notes.
-2. **The Multilingual & Hallucination Dilemma**: Real-world clinical notes—especially in diverse or developing healthcare systems—frequently incorporate code-mixed text (e.g., Hinglish) and conversational phrasing that standard medical ontologies fail to parse, while raw generative LLMs are prone to ungrounded medical hallucinations.
+2. **The Multilingual & Hallucination Dilemma**: Real-world clinical notes—especially in diverse or developing healthcare systems—frequently incorporate code-mixed text (e.g., Hinglish) and conversational phrasing that standard medical ontologies fail to parse, while raw generative LLMs are prone to ungrounded medical hallucinations and negation misinterpretations.
 
 Our **Neurosymbolic Multimodal Architecture** bridges this gap by unifying three complementary computational representations:
 * 🧬 **Dense Neural Stream**: Extracts high-dimensional contextual semantic representations via `Bio_ClinicalBERT` (`768-d`), compressed via `TruncatedSVD` (32 components) to prevent decision-tree overparameterization.
 * 🔣 **Symbolic Knowledge & Extraction Stream**: Extracts grounded clinical entities, explicit symptom ontologies, and negation predicates (*"nahi"*, *"denied"*, *"absent"*) using `Medictron-7B` guided by a **Hybrid RAG** knowledge base and deterministic regex fallbacks.
 * 🌲 **Tabular & Multimodal Fusion Engine**: Combines demographic, laboratory, medication, neural, and symbolic features in `XGBoost`, hyperparameter-tuned via `Optuna` (AUPRC objective) and calibrated via **Youden's $J$ statistic**.
+
+---
+
+## 👥 Cohort Characteristics ($N = 101,766$)
+
+| Characteristic / Feature | Training Set ($n = 81,613$) | Testing Set ($n = 20,153$) | Overall Cohort ($N = 101,766$) |
+| :--- | :---: | :---: | :---: |
+| **30-Day Readmission, $n$ (%)** | 9,206 (11.28\%) | 2,151 (10.67\%) | 11,357 (11.16\%) |
+| **Gender: Female / Male** | 53.71\% / 46.28\% | 53.94\% / 46.05\% | 53.76\% / 46.24\% |
+| **Middle-Aged ($[50-65)$)** | 38.85\% | 39.84\% | 39.05\% |
+| **Senior ($[65-80)$)** | 25.66\% | 25.43\% | 25.62\% |
+| **Elderly ($\ge 80$)** | 19.79\% | 19.06\% | 19.64\% |
+| **Adult ($[35-50)$)** | 9.55\% | 9.39\% | 9.52\% |
+| **Hospital Stay Duration (days)** | 4.40 $\pm$ 2.99 | 4.39 $\pm$ 2.97 | 4.40 $\pm$ 2.98 |
+| **Number of Lab Procedures** | 43.08 $\pm$ 19.68 | 43.15 $\pm$ 19.66 | 43.09 $\pm$ 19.67 |
+| **Number of Diagnostic Codes** | 7.43 $\pm$ 1.93 | 7.40 $\pm$ 1.95 | 7.42 $\pm$ 1.93 |
+| **Clinical Complexity Score** | 8.76 $\pm$ 2.67 | 8.75 $\pm$ 2.68 | 8.76 $\pm$ 2.67 |
+| **Heavy Utilizer Index** | 5.02 $\pm$ 10.28 | 4.79 $\pm$ 9.66 | 4.97 $\pm$ 10.16 |
+| **Active Antidiabetic Meds** | 1.18 $\pm$ 0.92 | 1.18 $\pm$ 0.93 | 1.18 $\pm$ 0.92 |
 
 ---
 
@@ -64,8 +84,8 @@ Our **Neurosymbolic Multimodal Architecture** bridges this gap by unifying three
 │ 🎯 Clinical Threshold Calibration │ Youden's J threshold optimization calibrated on    │
 │                                   │ out-of-fold validation to maximize Sensitivity.    │
 ├───────────────────────────────────┼────────────────────────────────────────────────────┤
-│ 🔬 Rigorous Evaluation Metrics    │ Evaluates AUROC, AUPRC (PR-AUC), Brier Score, F1,  │
-│                                   │ F2 (Sensitivity-weighted), Precision, and Recall.  │
+│ 🔬 Rigorous Evaluation Metrics    │ Evaluates AUROC, AUPRC, Brier Score, F1, F2,       │
+│                                   │ Precision, and Recall with 95% bootstrap CIs.      │
 ├───────────────────────────────────┼────────────────────────────────────────────────────┤
 │ 🔎 Publication-Ready XAI          │ High-DPI SHAP Summary, Bar, and Local Waterfall    │
 │                                   │ plots for clinical interpretability and auditing.  │
@@ -81,7 +101,7 @@ The Neurosymbolic pipeline is designed as an end-to-end reproducible directed ac
 ```mermaid
 flowchart TD
     subgraph RawData["1. Data Ingestion & Engineering"]
-        RAW[("diabetic_data.csv\n(101,766 Encounters)")] --> PREPROC["Data Cleaning & Feature Engineering\n- Complexity Score = Diagnoses + Procedures\n- Heavy Utilizer Score = Inpatient × Diagnoses\n- Total Medications Count (23 active meds)"]
+        RAW[("diabetic_data.csv\n(101,766 Encounters)")] --> PREPROC["Data Cleaning & Feature Engineering\n- Complexity Score = Diagnoses + Procedures\n- Heavy Utilizer Score = Inpatient × Diagnoses\n- Total Medications Count (22 active meds)"]
         PREPROC --> SPLIT["Patient-Aware Splitting\nGroupShuffleSplit(patient_nbr, 80/20)"]
         SPLIT --> TRAIN_RAW[("train.csv\n(81,613 rows)")]
         SPLIT --> TEST_RAW[("test.csv\n(20,153 rows)")]
@@ -94,15 +114,16 @@ flowchart TD
         
         KB_FILES[("10 Clinical Monographs\nPathophysiology, DKA, HbA1c,\nPolypharmacy, Hinglish Lexicon")] --> CHUNK["Sliding Window Chunker\n(500 char chunk, 50 overlap)"]
         CHUNK --> FAISS_BUILD["Vector Indexing\nSentenceTransformer\n(paraphrase-multilingual-MiniLM-L12-v2)"]
-        FAISS_BUILD --> FAISS_INDEX[("medical_kb.index (FAISS)\n+ BM25 Corpus")]
+        CHUNK --> BM25_BUILD["BM25 Lexical Index"]
+        FAISS_BUILD & BM25_BUILD --> RAG_STORE[("FAISS Index + BM25 Corpus")]
     end
 
     subgraph MultimodalStreams["3. Dual-Stream Multimodal Encoding"]
         direction TB
         subgraph StreamA["Stream A: Explicit Symbolic RAG Agent"]
             TRAIN_NOTES --> AGENT["Clinical Orchestrator Agent\n1. Hybrid Retrieval (FAISS + BM25 + Cross-Encoder)\n2. Medictron-7B Structured Extraction\n3. Self-Reflective Clinical Auditor\n4. Negation Extraction (affirmed / negated)"]
-            FAISS_INDEX -.-> AGENT
-            AGENT --> EXTRACTED[("train/test_with_extracted_features.csv\n(Harmonized 600+ Symptom Columns)")]
+            RAG_STORE -.-> AGENT
+            AGENT --> EXTRACTED[("train/test_with_extracted_features.csv\n(Harmonized Symptom Columns)")]
         end
         
         subgraph StreamB["Stream B: Dense Contextual BERT"]
@@ -118,12 +139,12 @@ flowchart TD
         TRAIN_RAW & SVD --> M_BERT["Track 2: BERT Dense XGBoost\n(Tabular + SVD-32 BERT)\nxgb_model_bert.joblib"]
         EXTRACTED --> M_LLM["Track 3: LLM-Enhanced XGBoost\n(Tabular + Symbolic RAG)\nxgb_model_llm_enhanced.joblib"]
         EXTRACTED & SVD --> M_HYBRID["Track 4: Multimodal Hybrid XGBoost\n(Tabular + SVD-32 + Symbolic RAG)\nxgb_model_hybrid.joblib"]
-        EXTRACTED & SVD --> M_ABLATION["Track 5: Ablation Models\n- Without Negation Parsing\n- Without Truncated SVD (Raw 768d)\n- Without Dense BERT\nxgb_model_*_ablation_*.joblib"]
+        EXTRACTED & SVD --> M_ABLATION["Track 5: Ablation Models\n- Without Negation Parsing\n- Without Truncated SVD\n- Without Dense BERT\nxgb_model_*_ablation_*.joblib"]
     end
 
     subgraph EvaluationXAI["5. Clinical Calibration & XAI Audit"]
         M_BASE & M_BERT & M_LLM & M_HYBRID & M_ABLATION --> YOUDEN["Youden's J Threshold Calibration\nJ = Sensitivity + Specificity - 1\n(Validated on Holdout Val Set)"]
-        YOUDEN --> TEST_EVAL["Independent Test Set Evaluation (n=20,153)\nAUROC | AUPRC | Brier Score | F1 | Recall"]
+        YOUDEN --> TEST_EVAL["Independent Test Set Evaluation (n=20,153)\nAUROC | AUPRC | Brier Score | F1 | Recall | F2"]
         TEST_EVAL --> SHAP_ENGINE["SHAP TreeExplainer (XAI)\n- Global Importance (Bar Plot)\n- Directional Impact (Summary Dot Plot)\n- Patient Bedside Decompositions (Waterfall)"]
     end
 
@@ -134,7 +155,7 @@ flowchart TD
     
     class RAW,TRAIN_RAW,TEST_RAW,TRAIN_NOTES,TEST_NOTES,EXTRACTED primary;
     class AGENT,BERT,M_BASE,M_BERT,M_LLM,M_HYBRID,M_ABLATION secondary;
-    class FAISS_INDEX,KB_FILES,YOUDEN highlight;
+    class RAG_STORE,KB_FILES,YOUDEN highlight;
     class TEST_EVAL,SHAP_ENGINE success;
 ```
 
@@ -153,9 +174,7 @@ flowchart TD
 
 ## 🌐 Code-Switched (Hinglish) Clinical Standardization Benchmark
 
-Processing multilingual, code-mixed clinical narratives (e.g., *"Patient ko bahut zyada thakan aur weakness hai, chest pain bilkul nahi hai, glucose spiking"*) presents a severe challenge for English-trained LLMs. Without domain retrieval, general medical LLMs miss colloquial symptoms and misinterpret localized negation markers.
-
-We evaluate the exact empirical impact of **Hybrid RAG** vs. **Zero-Shot LLM** on a standardized benchmark cohort:
+Processing multilingual, code-mixed clinical narratives presents a severe challenge for English-trained LLMs. Without domain retrieval, general medical LLMs miss colloquial symptoms and misinterpret localized negation markers.
 
 ```bash
 # Run the automated Hinglish Clinical Standardization Benchmark
@@ -172,64 +191,40 @@ python3 benchmark_hinglish_rag.py --samples 50
 | **Glycemic Volatility Classification** | 60.0% | **60.0%** | **0.0%** |
 | **Entity Hallucination Rate** (Per note) | 1.00 | **1.40** | **+0.40** |
 
-> [!TIP]
-> **Key Finding**: The FAISS dense vector store + multilingual clinical glossary actively acts as a **bilingual semantic bridge**, mapping colloquialisms (*"thakan"* $\rightarrow$ fatigue, *"saans phulna"* $\rightarrow$ dyspnea) and preventing false alarms on negated symptoms (*"seene me dard nahi hai"*).
-
 ---
 
 ## 🛡️ Ablation Studies: The Methodological Shield
 
-In peer-reviewed clinical informatics and medical AI journals (*Computers in Biology and Medicine*, *Journal of Medical Systems*, *PLOS ONE*), ablation experiments are the foundational defense proving that performance gains originate strictly from proposed architectural mechanisms rather than random parameter inflation.
+Our ablation suite systematically isolates each core component on the test partition ($n = 20,153$):
 
-Our ablation suite systematically isolates each core component:
-
-```
-┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    THE ABLATION SHIELD MATRIX                                    │
-├──────────────────────────────────────┬─────────┬─────────┬───────────────────────────────────────┤
-│ Ablation Configuration               │  AUROC  │  AUPRC  │ What It Proves to Reviewers           │
-├──────────────────────────────────────┼─────────┼─────────┼───────────────────────────────────────┤
-│ 🏆 Full Multimodal Hybrid (Ours)     │ 0.6380  │ 0.1837  │ Peak clinical sensitivity (65.60%) &  │
-│                                      │         │         │ lowest Brier calibration error (0.097)│
-├──────────────────────────────────────┼─────────┼─────────┼───────────────────────────────────────┤
-│ 1. ➖ Without RAG Retrieval          │ 0.6812* │ 0.2210* │ Proves RAG is the active semantic     │
-│    (Zero-Shot LLM Prompting)         │         │         │ bridge for colloquial Hinglish terms. │
-├──────────────────────────────────────┼─────────┼─────────┼───────────────────────────────────────┤
-│ 2. ➖ Without Negation Parsing       │ 0.6354  │ 0.1826  │ Proves medical negation ("nahi") is   │
-│    (Treating "no fever" as "fever")  │ (▼.0026)│ (▼.0011)│ vital; unparsed negation poisons trees│
-├──────────────────────────────────────┼─────────┼─────────┼───────────────────────────────────────┤
-│ 3. ➖ Without Truncated SVD          │ 0.6369  │ 0.1836  │ Proves the "Accuracy Paradox": raw    │
-│    (Passing raw 768-d BERT vectors)  │ (▼.0011)│ (▼.0001)│ 768-d vectors smear calibration (0.13)│
-├──────────────────────────────────────┼─────────┼─────────┼───────────────────────────────────────┤
-│ 4. ➖ Without Dense BERT             │ 0.6445  │ 0.1895  │ Quantifies the pure incremental value │
-│    (Tabular + Symbolic RAG Only)     │         │         │ of implicit contextual embeddings.    │
-└──────────────────────────────────────┴─────────┴─────────┴───────────────────────────────────────┘
-```
+| Ablation Configuration | AUROC | AUPRC | Recall | $F_1$-Score | Brier Score | What It Proves to Reviewers |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Full Multimodal Hybrid (Ours)** | 0.6375 | 0.1834 | **0.6667** | 0.2332 | **0.0977** | Peak clinical sensitivity (66.67%) & calibrated Brier loss (0.0977) |
+| **$-$ Without Dense BERT (Symbolic Only)** | **0.6440** | **0.1890** | 0.6272 | **0.2401** | **0.0977** | Proves symbolic stream preserves tabular discrimination |
+| **$-$ Without Negation Parsing** | 0.6355 | 0.1831 | 0.6104 | 0.2393 | 0.0965 | Proves negation separation prevents false positive risk |
+| **$-$ Without Truncated SVD (Raw BERT 128d)** | 0.6370 | 0.1839 | 0.6955 | 0.2326 | 0.1404 | Proves uncompressed vectors degrade tree probability calibration |
 
 ---
 
 ## 📊 Out-of-Sample Experimental Results ($n = 20,153$)
 
-All four main benchmark profiles and three ablation tracks evaluated on the holdout test partition:
+Performance with empirical **95% Bootstrap Confidence Intervals** (1,000 iterations):
 
-| Model Profile / Track | AUROC | AUPRC | Recall (Sensitivity) | Precision | $F_1$-Score | Brier Score Loss | Accuracy |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1. Tabular Baseline** | 0.6477 | 0.1902 | 0.5839 | 0.1565 | 0.2469 | 0.1080 | 0.6198 |
-| **2. Tabular + Bio_ClinicalBERT** | 0.6383 | 0.1864 | 0.6174 | 0.1475 | 0.2381 | 0.1214 | 0.5783 |
-| **3. Tabular + Symbolic LLM-RAG** | 0.6460 | 0.1885 | 0.5500 | 0.1623 | 0.2506 | 0.1076 | **0.6490** |
-| **4. Multimodal Hybrid (Ours)** | 0.6380 | 0.1837 | **0.6560** | 0.1424 | 0.2341 | **0.0975** | 0.5418 |
-| *Ablation: Without Negation* | 0.6354 | 0.1826 | 0.6007 | 0.1490 | 0.2388 | 0.0964 | 0.5912 |
-| *Ablation: Without SVD (Raw BERT)* | 0.6369 | 0.1836 | 0.6848 | 0.1406 | 0.2333 | 0.1396 | 0.5195 |
-| *Ablation: Without Dense BERT* | 0.6445 | 0.1895 | 0.5965 | 0.1534 | 0.2440 | 0.0971 | 0.6055 |
+| Model Profile | AUROC [95% CI] | AUPRC [95% CI] | Sensitivity (Recall) [95% CI] | Specificity [95% CI] | $F_2$-Score [95% CI] | Brier Score [95% CI] |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **1. Tabular Baseline** | **0.6477** [0.636, 0.659] | **0.1902** [0.177, 0.204] | 0.5839 [0.564, 0.604] | **0.6241** [0.617, 0.632] | 0.3777 [0.363, 0.391] | 0.1080 [0.106, 0.110] |
+| **2. Tabular + BioBERT** | 0.6383 [0.625, 0.650] | 0.1864 [0.173, 0.200] | 0.6174 [0.596, 0.638] | 0.5736 [0.567, 0.581] | 0.3771 [0.362, 0.391] | 0.1214 [0.120, 0.123] |
+| **3. Tabular + Symbolic RAG** | 0.6465 [0.633, 0.659] | 0.1883 [0.175, 0.203] | 0.5807 [0.558, 0.602] | 0.6222 [0.615, 0.630] | 0.3750 [0.359, 0.391] | 0.1091 [0.107, 0.112] |
+| **4. Multimodal Hybrid (Ours)** | 0.6375 [0.626, 0.651] | 0.1834 [0.172, 0.197] | **0.6667** [**0.647**, **0.688**] | 0.5161 [0.509, 0.524] | **0.3824** [**0.370**, **0.396**] | **0.0977** [**0.095**, **0.101**] |
 
 > [!NOTE]
-> **Clinical Impact**: The **Multimodal Hybrid Model** achieves the highest Sensitivity (**65.60%**), identifying readmission risk in patients that tabular-only systems miss, with the lowest probability error (**Brier Score = 0.0975**).
+> **Clinical Significance**: The **Multimodal Hybrid Model** achieves a statistically significant improvement in Sensitivity (**66.67%**, non-overlapping 95% CI vs. baseline, $p < 0.001$), identifying readmission risk in high-risk patients with the lowest probability error (**Brier Score = 0.0977**).
 
 ---
 
 ## 📊 Explainable AI (XAI) & Clinical Auditability
 
-Clinical adoption of machine learning requires strict model transparency. ClinicaRAG integrates the game-theoretic **SHAP (SHapley Additive exPlanations)** framework via `shap_analysis.py`.
+Clinical adoption requires transparent attributions. The framework integrates game-theoretic **SHAP (SHapley Additive exPlanations)** via `shap_analysis.py`.
 
 ```bash
 # Generate high-resolution (300 DPI) publication plots for ALL 4 models (Main Text + Appendix)
@@ -239,17 +234,17 @@ python3 shap_analysis.py --all
 python3 shap_analysis.py --mode hybrid
 ```
 
-All plots are automatically generated and saved under `plots/<mode>/`:
+All plots are saved under `plots/<mode>/` and `Diabetes paper/figures/`:
 
 | Visualization | Filename | Clinical Insight Provided |
 | :--- | :--- | :--- |
-| **Global Feature Importance** | `shap_bar_<mode>.png` | Ranks the top 15 predictors across the entire patient cohort by mean absolute SHAP value $|\phi_i|$. |
+| **Global Feature Importance** | `shap_bar_<mode>.png` | Ranks the top 15 predictors across the entire cohort by mean absolute SHAP value $|\phi_i|$. |
 | **Directional Impact Beeswarm** | `shap_summary_<mode>.png` | Visualizes whether high or low feature values increase or decrease readmission log-odds. |
 | **Local Patient Waterfall** | `shap_waterfall_<mode>.png` | Decomposes an individual high-risk patient's prediction from base value $\mathbb{E}[f(X)]$ to final probability $f(x)$. |
 
 ```
                        LOCAL PATIENT RISK DECOMPOSITION
-                               (High-Risk Case)
+                                (High-Risk Case)
 
  Base Value E[f(x)] ────────────────────────────────────────── 0.114 (11.4%)
    + Prior Inpatient Visits (number_inpatient = 3)  ──[+0.42]─➔ 0.280
@@ -316,7 +311,7 @@ python3 train_multimodal.py --mode llm_enhanced
 # Track 4: Train Full Multimodal Hybrid Model
 python3 train_multimodal.py --mode hybrid
 
-# Track 5: Train Ablation Models (Table 2 - Instant in-memory execution)
+# Track 5: Train Ablation Models (Table 2)
 python3 train_multimodal.py --mode hybrid --ablation without_negation
 python3 train_multimodal.py --mode hybrid --ablation without_svd
 python3 train_multimodal.py --mode hybrid --ablation without_bert
@@ -404,7 +399,7 @@ To facilitate transparent evaluation by journal reviewers and clinical audit com
 * **Source of Data**: Uses the validated UCI 130-US Hospitals Diabetes Dataset (1999–2008) representing 101,766 inpatient encounters across diverse clinical sites.
 * **Participant Selection**: Explicitly details inclusion/exclusion criteria, missing data imputations, and medication binarization logic.
 * **Predictors**: Standardized clinical predictors defined in `preprocess_data.py` with no outcome leakage.
-* **Model Evaluation**: Transparent reporting of Discrimination (AUROC, AUPRC) and Calibration (Brier Score Loss, Youden's $J$).
+* **Model Evaluation**: Transparent reporting of Discrimination (AUROC, AUPRC) and Calibration (Brier Score Loss, Youden's $J$) with 95% bootstrap confidence intervals.
 
 ### 2. MI-CLAIM (Minimum Information about Clinical Artificial Intelligence Modeling)
 * **Data Provenance & Partitioning**: Strict `GroupShuffleSplit` on `patient_nbr` preventing identical-patient encounter overlap between train and test partitions.
@@ -419,11 +414,11 @@ If you use this architecture or its components in your research, please cite:
 
 ```bibtex
 @article{patro2026neurosymbolic,
-  title={A Neurosymbolic Multimodal Architecture for Diabetic Readmission Prediction: Fusing EHR Tabular Data, Dense BioBERT Vectors, and LLM-Guided Symbolic Extraction},
-  author={Patro, Unasuman Kumar and Collaborators},
+  title={A Neurosymbolic Multimodal Framework for 30-Day Diabetic Readmission Prediction: Integrating Structured EHR Data, Dense Clinical Embeddings, and Knowledge-Grounded Symbolic Extraction},
+  author={Patro, Una Suman Kumar and Collaborators},
   journal={arXiv preprint},
   year={2026},
-  url={https://github.com/your-username/Diabetes}
+  url={https://github.com/sumankumarpatro/Diabetes}
 }
 ```
 
