@@ -42,7 +42,6 @@ class ProjectConfig(BaseSettings):
     BERT_PCA_COMPONENTS: int = 32
     TRAIN_BERT_EMBEDDINGS_PATH: Path = Field(default=Path("processed_data/train_bert_embeddings.npy"))
     TEST_BERT_EMBEDDINGS_PATH: Path = Field(default=Path("processed_data/test_bert_embeddings.npy"))
-
     TRAIN_DATA_PATH: Path = Field(default=Path("processed_data/train.csv"))
     TEST_DATA_PATH: Path = Field(default=Path("processed_data/test.csv"))
     TRAIN_WITH_NOTES_PATH: Path = Field(default=Path("processed_data/train_with_notes.csv"))
