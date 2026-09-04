@@ -8,10 +8,6 @@ from sentence_transformers import SentenceTransformer
 from config import config
 
 def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
-    """
-    Loads clinical reference documents, splits them into semantic chunks,
-    generates dense embeddings using MPS (Apple Silicon GPU), and compiles a FAISS index.
-    """
     kb_path = Path(kb_dir)
     index_path = Path(index_output_path)
 
@@ -56,7 +52,7 @@ def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
                 metadata_list.append(document_metadata[i].copy())
             start += (chunk_size - chunk_overlap)
 
-    logger.info(f"Generated {len(documents)} overlapping knowledge chunks.")
+    logger.info(f"{len(documents)} chunks after overlap splitting")
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     logger.info(f"Loading embedding model ({config.RETRIEVER_MODEL_NAME}) on device: {device}")
@@ -72,7 +68,7 @@ def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
 
     dimension = embeddings.shape[1]
 
-    logger.info(f"Building FAISS IndexFlatL2 with dimension {dimension}...")
+    logger.info(f"indexing {len(documents)} chunks (dim={dimension})")
     index = faiss.IndexFlatL2(dimension)
     index.add(embeddings)
 

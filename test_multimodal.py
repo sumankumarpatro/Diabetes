@@ -14,25 +14,33 @@ from sklearn.metrics import (
 from config import config
 
 def print_evaluation_metrics(mode: str, metrics: dict, report: str):
-    border = "=" * 65
-    sub_border = "-" * 65
-    print(f"\n{border}")
-    print(f" PROFILE: {mode.upper()} DEPLOYMENT MODEL ".center(65, " "))
-    print(f"{border}")
-    print(f"  ● OUT-OF-SAMPLE AUC-ROC :  {metrics['auc']:.4f}")
-    print(f"  ● AVERAGE PRECISION(PR) :  {metrics['auprc']:.4f}")
-    print(f"  ● BRIER SCORE LOSS      :  {metrics['brier']:.4f}")
-    print(f"  ● OVERALL ACCURACY      :  {metrics['accuracy']:.4f}")
-    print(f"  ● OPTIMIZED F1-SCORE    :  {metrics['f1']:.4f}")
-    print(f"  ● MODEL PRECISION       :  {metrics['precision']:.4f}")
-    print(f"  ● MODEL RECALL (SENS.)  :  {metrics['recall']:.4f}")
-    print(f"  ● DECISION THRESHOLD   :  {metrics['threshold']:.4f}")
-    print(f"{sub_border}")
-    print(" DETAILED CLASSIFICATION MATRIX ".center(65, " "))
-    print(f"{sub_border}")
-    indented = "\n".join(f"   {line}" for line in report.splitlines())
-    print(indented)
-    print(f"{border}\n")
+    print(f"\nEvaluation Summary ({mode}):")
+    labels = {
+        'auc': 'AUC-ROC',
+        'auprc': 'Average Precision (PR)',
+        'brier': 'Brier Score Loss',
+        'accuracy': 'Accuracy',
+        'f1': 'F1 Score',
+        'precision': 'Precision',
+        'recall': 'Recall',
+        'threshold': 'Threshold',
+    }
+    for key, label in labels.items():
+        if key in metrics:
+            print(f"  {label:<24}: {metrics[key]:.4f}")
+    print(f"\nClassification Report:\n{report}\n")
+
+def apply_negation_ablation(df: pd.DataFrame) -> pd.DataFrame:
+    for aff in [c for c in df.columns if c.startswith('symptom_') and c.endswith('_affirmed')]:
+        base = aff[:-9]
+        neg = f"{base}_negated"
+        if neg in df.columns:
+            df[base] = (df[aff].fillna(0).astype(int) | df[neg].fillna(0).astype(int)).astype(int)
+            df.drop(columns=[aff, neg], inplace=True)
+        else:
+            df[base] = df[aff].fillna(0).astype(int)
+            df.drop(columns=[aff], inplace=True)
+    return df
 
 def evaluate_model(mode: str, ablation: str = "none"):
     config.MODE = mode
@@ -56,17 +64,7 @@ def evaluate_model(mode: str, ablation: str = "none"):
     df_test = pd.read_csv(test_path)
 
     if ablation == "without_negation":
-        logger.info("Applying Ablation: Merging test affirmed and negated symptom flags into single presence flags...")
-        symptom_affirmed_cols = [c for c in df_test.columns if c.startswith('symptom_') and c.endswith('_affirmed')]
-        for aff_col in symptom_affirmed_cols:
-            base_symptom = aff_col.replace('_affirmed', '')
-            neg_col = f"{base_symptom}_negated"
-            if neg_col in df_test.columns:
-                df_test[base_symptom] = (df_test[aff_col].fillna(0).astype(int) | df_test[neg_col].fillna(0).astype(int)).astype(int)
-                df_test.drop(columns=[aff_col, neg_col], inplace=True)
-            else:
-                df_test[base_symptom] = df_test[aff_col].fillna(0).astype(int)
-                df_test.drop(columns=[aff_col], inplace=True)
+        df_test = apply_negation_ablation(df_test)
 
     symptom_cols = [c for c in df_test.columns if c.startswith('symptom_')]
     if symptom_cols:

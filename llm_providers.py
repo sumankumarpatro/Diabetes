@@ -6,6 +6,13 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from config import config
 
+_RETRY_POLICY = dict(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=6),
+    retry=retry_if_exception_type((RuntimeError, ConnectionError, TimeoutError, OSError)),
+    reraise=True,
+)
+
 class LLMProvider(ABC):
     @abstractmethod
     async def generate_structured_json(self, prompt: str, schema: Dict[str, Any]) -> Optional[str]:
@@ -22,12 +29,7 @@ class OllamaProvider(LLMProvider):
         self.client = ollama.AsyncClient(host=self.base_url)
         logger.info(f"[OllamaProvider] Initialized model: {self.model_name} at {self.base_url}")
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=6),
-        retry=retry_if_exception_type((RuntimeError, ConnectionError, Exception)),
-        reraise=True
-    )
+    @retry(**_RETRY_POLICY)
     async def generate_structured_json(self, prompt: str, schema: Dict[str, Any]) -> Optional[str]:
         system_prompt = (
             "You are a clinical information extraction specialist. "
@@ -49,16 +51,11 @@ class OllamaProvider(LLMProvider):
                 }
             )
             return response.get('response', '')
-        except (ConnectionError, TimeoutError, RuntimeError) as e:
+        except (ConnectionError, TimeoutError, RuntimeError, OSError) as e:
             logger.warning(f"[OllamaProvider] JSON generation failed ({str(e)[:80]}). Retrying...")
             raise e
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=6),
-        retry=retry_if_exception_type((RuntimeError, ConnectionError, Exception)),
-        reraise=True
-    )
+    @retry(**_RETRY_POLICY)
     async def generate_text(self, prompt: str) -> Optional[str]:
         try:
             response = await self.client.generate(

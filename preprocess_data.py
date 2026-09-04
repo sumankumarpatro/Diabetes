@@ -7,10 +7,6 @@ from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from config import config
 
 def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
-    """
-    Preprocesses the diabetes dataset: cleaning and advanced feature engineering.
-    Preprocesses tabular data and performs patient-stratified train/test splitting.
-    """
     if not data_path.exists():
         logger.error(f"Input data not found: {data_path}")
         return
@@ -29,8 +25,6 @@ def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
         logger.error("Target column 'readmitted' not found in dataset.")
         return
 
-    logger.info("Performing feature engineering...")
-    
     med_cols = [
         'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride', 
         'acetohexamide', 'glipizide', 'glyburide', 'tolbutamide', 'pioglitazone', 
@@ -58,11 +52,11 @@ def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
             
     if 'number_diagnoses' in df.columns and 'num_procedures' in df.columns:
         df['clinical_complexity_score'] = df['number_diagnoses'] + df['num_procedures']
-        logger.info("Engineered 'clinical_complexity_score'.")
+        logger.info("added clinical_complexity_score")
 
     if 'number_inpatient' in df.columns and 'number_diagnoses' in df.columns:
         df['heavy_utilizer_score'] = df['number_inpatient'] * df['number_diagnoses']
-        logger.info("Engineered 'heavy_utilizer_score'.")
+        logger.info("added heavy_utilizer_score")
 
     if 'diabetesMed' in df.columns:
         df['diabetesMed_binary'] = df['diabetesMed'].apply(lambda x: 1 if str(x).strip().lower() == 'yes' else 0)

@@ -32,7 +32,6 @@ from config import config
 optuna.logging.set_verbosity(optuna.logging.ERROR)
 
 def get_tabular_columns(X: pd.DataFrame):
-    """Identifies numeric and categorical tabular columns, excluding raw text and dense BERT features."""
     exclude_cols = ['clinical_note', 'index', 'split', 'id', 'patient_id', 'encounter_id', 'patient_nbr', 'readmitted_binary']
     available_cols = [c for c in X.columns if c not in exclude_cols and not c.startswith('bert_dim_')]
     
@@ -57,7 +56,6 @@ def build_preprocessor(numeric_cols, categorical_cols, bert_cols=None):
         ]), categorical_cols)
     ]
     
-    # Include BERT dense feature columns if present
     if bert_cols:
         transformers.append(('bert', 'passthrough', bert_cols))
 
@@ -77,7 +75,6 @@ def build_classifier(scale_pos_weight=1.0, **kwargs):
     )
 
 def calibrate_clinical_threshold(y_true, y_prob):
-    """Calibrates threshold via Youden's J Index to maximize Sensitivity & Specificity."""
     fpr, tpr, thresholds = roc_curve(y_true, y_prob)
     j_scores = tpr - fpr
     best_idx = np.argmax(j_scores)
@@ -99,11 +96,23 @@ def evaluate_pipeline(pipeline, X, y, threshold=0.5):
         'y_pred': y_pred,
     }
 
+def apply_negation_ablation(df: pd.DataFrame) -> pd.DataFrame:
+    for aff in [c for c in df.columns if c.startswith('symptom_') and c.endswith('_affirmed')]:
+        base = aff[:-9]
+        neg = f"{base}_negated"
+        if neg in df.columns:
+            df[base] = (df[aff].fillna(0).astype(int) | df[neg].fillna(0).astype(int)).astype(int)
+            df.drop(columns=[aff, neg], inplace=True)
+        else:
+            df[base] = df[aff].fillna(0).astype(int)
+            df.drop(columns=[aff], inplace=True)
+    return df
+
 def train_optimized_model(mode: str, ablation: str = "none") -> None:
     config.MODE = mode
     config.ABLATION = ablation
-    ablation_str = f" [ABLATION: {ablation.upper()}]" if ablation != "none" else ""
-    logger.info(f"=== Starting Training Pipeline: Mode [{mode.upper()}]{ablation_str} ===")
+    ablation_str = f" [ablation: {ablation}]" if ablation != "none" else ""
+    logger.info(f"Starting training pipeline for {mode}{ablation_str}")
     
     if mode in ["baseline", "bert"]:
         data_path = config.TRAIN_DATA_PATH if mode == "baseline" else config.TRAIN_WITH_NOTES_PATH
@@ -118,17 +127,7 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
     df = pd.read_csv(data_path)
 
     if ablation == "without_negation":
-        logger.info("Applying Ablation: Merging affirmed and negated symptom flags...")
-        symptom_affirmed_cols = [c for c in df.columns if c.startswith('symptom_') and c.endswith('_affirmed')]
-        for aff_col in symptom_affirmed_cols:
-            base_symptom = aff_col.replace('_affirmed', '')
-            neg_col = f"{base_symptom}_negated"
-            if neg_col in df.columns:
-                df[base_symptom] = (df[aff_col].fillna(0).astype(int) | df[neg_col].fillna(0).astype(int)).astype(int)
-                df.drop(columns=[aff_col, neg_col], inplace=True)
-            else:
-                df[base_symptom] = df[aff_col].fillna(0).astype(int)
-                df.drop(columns=[aff_col], inplace=True)
+        df = apply_negation_ablation(df)
 
     symptom_cols = [c for c in df.columns if c.startswith('symptom_')]
     if symptom_cols:
@@ -193,10 +192,12 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
     def objective(trial):
         param = {
             'classifier__n_estimators': trial.suggest_int('classifier__n_estimators', 80, 350),
+            # shallow trees to avoid overfitting sparse clinical features
             'classifier__max_depth': trial.suggest_int('classifier__max_depth', 3, 7),
             'classifier__learning_rate': trial.suggest_float('classifier__learning_rate', 0.02, 0.15, log=True),
             'classifier__subsample': trial.suggest_float('classifier__subsample', 0.7, 1.0),
             'classifier__colsample_bytree': trial.suggest_float('classifier__colsample_bytree', 0.7, 1.0),
+            # higher floor given class imbalance
             'classifier__min_child_weight': trial.suggest_int('classifier__min_child_weight', 2, 7),
             'classifier__gamma': trial.suggest_float('classifier__gamma', 0.1, 3.0),
             'classifier__reg_alpha': trial.suggest_float('classifier__reg_alpha', 1e-2, 5.0, log=True),
@@ -212,7 +213,7 @@ def train_optimized_model(mode: str, ablation: str = "none") -> None:
         return score.mean()
 
     def callback(study, trial):
-        logger.info(f"[Trial {trial.number + 1:02d}/{n_trials:02d}] AUPRC: {trial.value:.4f} | Best: {study.best_value:.4f}")
+        logger.info(f"trial {trial.number + 1}/{n_trials} — auprc={trial.value:.4f} (best so far: {study.best_value:.4f})")
 
     study = optuna.create_study(direction='maximize')
     study.optimize(objective, n_trials=n_trials, callbacks=[callback])

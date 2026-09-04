@@ -29,8 +29,6 @@ class RAGRetriever:
         self.metadata = None
         self.corpus = None
         self.bm25 = None
-
-        # Thread pool executor for retrieval
         self._math_executor = ThreadPoolExecutor(max_workers=4)
 
     def load(self) -> None:
@@ -72,9 +70,6 @@ class RAGRetriever:
     async def retrieve(
         self, query: str, k: int = None, category_filter: str = None
     ) -> list[str]:
-        """
-        Retrieves documents using FAISS and BM25 with cross-encoder reranking.
-        """
         if self.index is None or self.model is None:
             raise RuntimeError("Retriever is not loaded. Call load() first.")
 
@@ -132,7 +127,6 @@ class RAGRetriever:
         return combined_docs[:k]
 
     def close(self):
-        """Shuts down background compute threads."""
         self._math_executor.shutdown(wait=False)
 
 if __name__ == "__main__":
@@ -145,7 +139,7 @@ if __name__ == "__main__":
                 "How to manage insulin adjustments and hypoglycemia risk?",
                 "What are the indicators of 30-day diabetic readmissions?"
             ]
-            logger.info("=== Testing Hybrid Async RAG Retrieval ===")
+            logger.info("running retrieval smoke test")
             for q in test_queries:
                 logger.info(f"Query: {q}")
                 results = await retriever.retrieve(q, k=3)

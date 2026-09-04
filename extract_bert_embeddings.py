@@ -10,11 +10,8 @@ from transformers import AutoModel, AutoTokenizer
 from config import config
 
 class ClinicalNotesDataset(Dataset):
-    """Dataset for batch tokenization of clinical notes."""
-    def __init__(self, notes: list[str], tokenizer: AutoTokenizer, max_length: int = 256):
+    def __init__(self, notes: list[str]):
         self.notes = notes
-        self.tokenizer = tokenizer
-        self.max_length = max_length
 
     def __len__(self):
         return len(self.notes)
@@ -23,10 +20,6 @@ class ClinicalNotesDataset(Dataset):
         return str(self.notes[idx])
 
 def mean_pooling(model_output, attention_mask):
-    """
-    Computes attention-weighted mean pooling across token representations.
-    Standard best practice for dense clinical sentence representations.
-    """
     token_embeddings = model_output[0]
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
     sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, dim=1)
@@ -57,7 +50,7 @@ def extract_embeddings_for_dataset(
     total_notes = len(notes)
     logger.info(f"Loaded {total_notes} notes. Compiling batches (batch_size={batch_size}, max_len={max_length})...")
 
-    dataset = ClinicalNotesDataset(notes, tokenizer, max_length=max_length)
+    dataset = ClinicalNotesDataset(notes)
     
     def collate_fn(batch):
         return tokenizer(
@@ -112,7 +105,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name).to(device)
 
-    logger.info("=== Extracting Train Set Dense Embeddings ===")
+    logger.info("--- train split ---")
     extract_embeddings_for_dataset(
         csv_path=config.TRAIN_WITH_NOTES_PATH,
         output_npy_path=config.TRAIN_BERT_EMBEDDINGS_PATH,
@@ -123,7 +116,7 @@ def main():
         max_length=args.max_length
     )
 
-    logger.info("=== Extracting Test Set Dense Embeddings ===")
+    logger.info("--- test split ---")
     extract_embeddings_for_dataset(
         csv_path=config.TEST_WITH_NOTES_PATH,
         output_npy_path=config.TEST_BERT_EMBEDDINGS_PATH,
@@ -134,7 +127,7 @@ def main():
         max_length=args.max_length
     )
 
-    logger.success("Dense Bio_ClinicalBERT embedding extraction completed for both splits!")
+    logger.success("done, embeddings saved for both splits")
 
 if __name__ == "__main__":
     main()
