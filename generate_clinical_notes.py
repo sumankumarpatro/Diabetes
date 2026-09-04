@@ -5,10 +5,6 @@ import pandas as pd
 from config import config
 
 def get_grounded_symptom_pools(row: pd.Series):
-    """
-    Selects affirmed and negated Hinglish symptom candidates conditioned on
-    the patient's actual primary diagnosis category and clinical features.
-    """
     diag_cat = str(row.get('diag_1_category', 'Other'))
     a1c = str(row.get('A1Cresult', 'None'))
     insulin = str(row.get('insulin', 'No')).lower()
@@ -82,9 +78,6 @@ def get_grounded_symptom_pools(row: pd.Series):
     return affirmed_pool, negated_pool
 
 def generate_hinglish_note(row: pd.Series) -> str:
-    """
-    Generates a synthetic Hinglish clinical note for a single patient row.
-    """
     age = row.get('age', row.get('age_group', 'Unknown'))
     stay = row.get('time_in_hospital', 1)
     num_labs = row.get('num_lab_procedures', 0)
@@ -95,7 +88,6 @@ def generate_hinglish_note(row: pd.Series) -> str:
 
     affirmed_pool, negated_pool = get_grounded_symptom_pools(row)
 
-    # Sample without replacement for unique narrative variations
     k_affirmed = min(2, len(affirmed_pool))
     k_negated = min(1, len(negated_pool))
 
@@ -135,7 +127,7 @@ def main():
         df = pd.read_csv(input_path)
         
         logger.info(f"Generating grounded Hinglish clinical notes for {input_path.name} ({len(df)} records)...")
-        df['clinical_note'] = [generate_hinglish_note(row) for _, row in df.iterrows()]
+        df['clinical_note'] = df.apply(generate_hinglish_note, axis=1)
         
         output_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(output_path, index=False)

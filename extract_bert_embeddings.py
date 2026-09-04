@@ -10,7 +10,6 @@ from transformers import AutoModel, AutoTokenizer
 from config import config
 
 class ClinicalNotesDataset(Dataset):
-    """Dataset for batch tokenization of clinical notes."""
     def __init__(self, notes: list[str], tokenizer: AutoTokenizer, max_length: int = 256):
         self.notes = notes
         self.tokenizer = tokenizer
@@ -23,10 +22,6 @@ class ClinicalNotesDataset(Dataset):
         return str(self.notes[idx])
 
 def mean_pooling(model_output, attention_mask):
-    """
-    Computes attention-weighted mean pooling across token representations.
-    Standard best practice for dense clinical sentence representations.
-    """
     token_embeddings = model_output[0]
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
     sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, dim=1)

@@ -12,12 +12,10 @@ from llm_interface import LLMInterface
 from config import config
 
 class Symptom(BaseModel):
-    """Represents a clinical symptom and its negation status."""
     name: str = Field(..., description="The name of the symptom (e.g., 'fever', 'fatigue').")
     is_negated: bool = Field(..., description="True if the symptom is explicitly denied or absent in the note (e.g., 'no fever'), False otherwise.")
 
 class ClinicalFeatures(BaseModel):
-    """Structured clinical features extracted from a clinical note."""
     age_group: str = Field(..., description="The age group of the patient (e.g., '[0-10)', 'age 25').")
     symptoms: List[Symptom] = Field(default_factory=list, description="List of reported symptoms with their negation status.")
     medications: List[str] = Field(default_factory=list, description="List of medications the patient is taking.")
@@ -27,14 +25,12 @@ class ClinicalFeatures(BaseModel):
     glucose_status: str = Field("Unknown", description="The glucose status (e.g., 'Hyperglycemia', 'Hypoglycemia', 'Unknown').")
 
 class ClinicalDecisionReport(BaseModel):
-    """Clinical report containing features, prediction, and recommendations."""
     features: ClinicalFeatures
     readmission_risk: Optional[bool]
     recommendations: str
 
 class ClinicalOrchestratorAgent:
     def __init__(self, retriever: RAGRetriever, llm: LLMInterface):
-        """Initializes the Orchestrator with injected dependencies."""
         self.retriever = retriever
         self.llm = llm
 
@@ -55,7 +51,6 @@ class ClinicalOrchestratorAgent:
         }
 
     def _extract_hospital_stay_days(self, clinical_note: str) -> Optional[int]:
-        """Extracts hospital stay days from note text if present."""
         patterns = [
             r'hospital\s+stay\s*[:=]\s*(\d+)',
             r'hospital\s+stay\s*(?:was|is|duration|for)?\s*[:=]?\s*(\d+)',
@@ -69,7 +64,6 @@ class ClinicalOrchestratorAgent:
         return None
 
     def _extract_medication_count(self, clinical_note: str) -> Optional[int]:
-        """Extracts medication count from note text."""
         patterns = [
             r'(?:number of medications|total medications|prescribed medications|medications)\s*[:=]\s*(\d+)',
             r'took\s+(\d+)\s+medications',
@@ -82,41 +76,28 @@ class ClinicalOrchestratorAgent:
         return None
 
     def _extract_condition_status(self, clinical_note: str) -> Optional[str]:
-        """Extracts condition status phrases from note."""
-        status_patterns = [
-            r'\b(stable|unstable|improving|worsening|deteriorating)\b',
-        ]
-        for pattern in status_patterns:
-            match = re.search(pattern, clinical_note, re.IGNORECASE)
-            if match:
-                return match.group(1).capitalize()
-        return None
+        match = re.search(r'\b(stable|unstable|improving|worsening|deteriorating)\b', clinical_note, re.IGNORECASE)
+        return match.group(1).capitalize() if match else None
 
     def _merge_reflected_data(self, extracted_data: Optional[Dict[str, Any]], reflected_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Merges audited data from the clinical reflector. 
-        Gives priority to reflector corrections for symptoms, negations, and clinical status.
-        """
-        if not isinstance(extracted_data, dict): 
+        if not extracted_data:
             return reflected_data or {}
-        if not isinstance(reflected_data, dict): 
+        if not reflected_data:
             return extracted_data
-        
-        merged = extracted_data.copy()
-        template_stop_tokens = ["only", "strict", "format", "array", "string", "instruction", "schema"]
+
+        merged = dict(extracted_data)
+        stop_tokens = ("only", "strict", "format", "array", "string", "instruction", "schema")
 
         for key, ref_val in reflected_data.items():
             orig_val = str(extracted_data.get(key, '')).lower()
-
-            if any(token in orig_val for token in template_stop_tokens) or not extracted_data.get(key):
+            if any(token in orig_val for token in stop_tokens) or not extracted_data.get(key):
                 merged[key] = ref_val
-            elif ref_val is not None and ref_val != "" and ref_val != []:
+            elif ref_val:
                 merged[key] = ref_val
 
         return merged
 
     async def _llm_parsing(self, text: str) -> Optional[Dict[str, Any]]:
-        """Parses clinical note into extraction schema."""
         prompt = f"""
         You are a clinical data extraction agent. Extract specific clinical entities from the provided clinical note and optional medical context.
         Instructions:
@@ -133,7 +114,6 @@ class ClinicalOrchestratorAgent:
         return response_json if response_json else None
 
     async def _reflect_on_extraction(self, original_note: str, extracted_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Verifies extracted data against original note."""
         prompt = f"""
         You are a clinical auditor. Verify if the extracted information matches the original clinical note.
         Instructions:
@@ -153,7 +133,6 @@ class ClinicalOrchestratorAgent:
             return None
 
     def _build_fallback_recommendations(self, features: ClinicalFeatures, readmission_risk: Optional[bool] = None) -> str:
-        """Fallback rule-based recommendation generator."""
         glucose_status = features.glucose_status or "Unknown"
         symptoms = features.symptoms or []
         medications = features.medications or []
@@ -172,19 +151,16 @@ class ClinicalOrchestratorAgent:
         else:
             base += " Reconfirm medication history and update the care plan as needed."
             
-        if readmission_risk is True:
+        if readmission_risk:
             base += f" Because the risk is elevated for this {age_group} patient, prioritize timely follow-up and escalation if symptoms worsen."
-        elif readmission_risk is False:
+        elif readmission_risk is not None:
             base += f" For this {age_group} patient, routine follow-up is appropriate unless symptoms progress."
         else:
             base += f" For this {age_group} patient, ensure close follow-up and reassess if symptoms worsen."
         return base.strip()
 
     async def _generate_recommendations(self, clinical_note: str, features: ClinicalFeatures, context_text: str = "", readmission_risk: Optional[bool] = None) -> str:
-        """ 
-        Generates clinical recommendations based on extracted features and context.
-        """
-        risk_str = "High" if readmission_risk is True else ("Low" if readmission_risk is False else "Unknown")
+        risk_str = "High" if readmission_risk else ("Low" if readmission_risk is not None else "Unknown")
         context_block = f"\nMedical Context: {context_text}" if context_text.strip() else ""
         prompt = f"""
         Write a concise recommendation summary (2-3 sentences max) based ONLY on this data. Do not use JSON formatting.
@@ -207,6 +183,55 @@ class ClinicalOrchestratorAgent:
         except (KeyError, ValueError, TypeError):
             return self._build_fallback_recommendations(features, readmission_risk)
 
+    @staticmethod
+    def _normalize_medications(meds_raw: Any) -> List[str]:
+        if isinstance(meds_raw, str):
+            meds_raw = [meds_raw]
+        if not isinstance(meds_raw, list):
+            return []
+        
+        normalized = []
+        for item in meds_raw:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("medication")
+                if name:
+                    normalized.append(str(name).strip())
+            elif isinstance(item, str) and item.strip():
+                normalized.append(item.strip())
+        return normalized
+
+    @staticmethod
+    def _normalize_symptoms(symptoms_raw: Any) -> List[Symptom]:
+        if not isinstance(symptoms_raw, list):
+            return []
+
+        neg_pattern = re.compile(r'\b(nahi|nahin|na|no|not|absent|denied|denies|koi nahi|bilkul nahi)\b', re.IGNORECASE)
+        breakout = re.compile(r"(\{|\[|\}|\]|:|'|\"|strict_array|format_only|is_negated|instruction)")
+        
+        normalized = []
+        for item in symptoms_raw:
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("symptom") or "").strip()
+                is_neg = bool(item.get("is_negated") or item.get("negated"))
+            elif isinstance(item, str):
+                name = item.strip()
+                is_neg = False
+            else:
+                continue
+
+            if not name or breakout.search(name.lower()):
+                continue
+
+            if neg_pattern.search(name):
+                is_neg = True
+                name = neg_pattern.sub("", name).strip()
+
+            name = re.sub(r'\s+', ' ', name)
+            if name:
+                normalized.append(Symptom(name=name, is_negated=is_neg))
+
+        return normalized
+
     async def orchestrate(
         self, 
         clinical_note: str, 
@@ -215,7 +240,6 @@ class ClinicalOrchestratorAgent:
         generate_recs: bool = False,
         use_rag: bool = True
     ) -> Optional[ClinicalDecisionReport]:
-        """Extracts features and generates decision report."""
         try:
             if use_rag and self.retriever is not None:
                 context_docs = await self.retriever.retrieve(clinical_note, k=config.RETRIEVAL_K)
@@ -240,43 +264,8 @@ class ClinicalOrchestratorAgent:
             medication_count = extracted_data.get("medication_count") or self._extract_medication_count(clinical_note)
             condition_status = self._extract_condition_status(clinical_note) or extracted_data.get("condition_status", "Unknown")
 
-            medications_raw = extracted_data.get("medications", [])
-            normalized_medications = []
-            if isinstance(medications_raw, list):
-                for item in medications_raw:
-                    if isinstance(item, dict):
-                        name = item.get("name") or item.get("medication")
-                        if name: normalized_medications.append(str(name).strip())
-                    elif isinstance(item, str) and item.strip():
-                        normalized_medications.append(item.strip())
-            elif isinstance(medications_raw, str) and medications_raw.strip():
-                normalized_medications = [medications_raw.strip()]
-
-            symptoms_raw = extracted_data.get("symptoms", [])
-            normalized_symptoms = []
-            neg_pattern = r'\b(nahi|nahin|na|no|not|absent|denied|denies|koi nahi|bilkul nahi)\b'
-            breakout_markers = r"(\{|\[|\}|\]|:|'|\"|strict_array|format_only|is_negated|instruction)"
-
-            if isinstance(symptoms_raw, list):
-                for s in symptoms_raw:
-                    if isinstance(s, dict):
-                        name_str = str(s.get("name") or s.get("symptom") or "").strip()
-                        if re.search(breakout_markers, name_str.lower()): continue
-                        is_neg = s.get("is_negated") or s.get("negated") or False
-                        if re.search(neg_pattern, name_str.lower()):
-                            is_neg = True
-                            name_str = re.sub(neg_pattern, "", name_str.lower()).strip()
-                        name_str = name_str.replace("  ", " ")
-                        if name_str: normalized_symptoms.append(Symptom(name=name_str, is_negated=bool(is_neg)))
-                    elif isinstance(s, str) and s.strip():
-                        name_str = s.strip()
-                        if re.search(breakout_markers, name_str.lower()): continue
-                        is_neg = False
-                        if re.search(neg_pattern, name_str.lower()):
-                            is_neg = True
-                            name_str = re.sub(neg_pattern, "", name_str.lower()).strip()
-                        name_str = name_str.replace("  ", " ")
-                        if name_str: normalized_symptoms.append(Symptom(name=name_str, is_negated=is_neg))
+            normalized_medications = self._normalize_medications(extracted_data.get("medications", []))
+            normalized_symptoms = self._normalize_symptoms(extracted_data.get("symptoms", []))
 
             features = ClinicalFeatures(
                 age_group=str(extracted_data.get("age_group", "Unknown")),
@@ -311,16 +300,15 @@ class ClinicalOrchestratorAgent:
             )
 
 async def main_async():
-    parser = argparse.ArgumentParser(description="Run Clinical Orchestrator Agent with custom input.")
-    parser.add_argument("--note", type=str, help="The clinical note to process.")
-    parser.add_argument("--high-risk", action="store_true", help="Set prediction to True (High Risk).")
-    parser.add_argument("--low-risk", action="store_true", help="Set prediction to False (Low Risk).")
+    parser = argparse.ArgumentParser(description="Run clinical decision orchestrator.")
+    parser.add_argument("--note", type=str, help="Clinical note text.")
+    parser.add_argument("--high-risk", action="store_true", help="Mark as high risk.")
+    parser.add_argument("--low-risk", action="store_true", help="Mark as low risk.")
     args = parser.parse_args()
 
     if args.note is None:
-        print("--- Clinical Agent Input Mode ---")
-        note = input("Enter the clinical note: ")
-        risk_input = input("Is this a high risk case? (y/n/u for unknown, default 'u'): ").strip().lower()
+        note = input("Clinical note: ")
+        risk_input = input("High risk case? (y/n/u): ").strip().lower()
         high_risk = True if risk_input == 'y' else (False if risk_input == 'n' else None)
     else:
         note = args.note
@@ -332,11 +320,8 @@ async def main_async():
     llm_interface = LLMInterface(provider=provider)
     
     agent = ClinicalOrchestratorAgent(retriever=retriever, llm=llm_interface)
-    logger.info("--- Starting Clinical Decision Support Process ---")
-    
     report = await agent.orchestrate(note, high_risk)
     if report:
-        print("\n--- FINAL CLINICAL DECISION REPORT ---")
         print(report.model_dump_json(indent=2))
     else:
         logger.error("Failed to generate report.")

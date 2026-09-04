@@ -1,16 +1,16 @@
 \begin{table}
-\caption{Code-Switched (Hinglish) Clinical Standardization Benchmark: Zero-Shot LLM vs. Hybrid RAG.}
+\caption{Code-Switched (Hinglish) Clinical Standardization Benchmark on N = 500 Out-of-Sample Test Encounters.}
 \label{tab:hinglish_benchmark}
-\begin{tabular}{lll}
+\begin{tabular}{llll}
 \toprule
-Metric & Without RAG (Zero-Shot) & With Hybrid RAG (Ours) \\
+Metric & Without RAG (Zero-Shot) & Generative RAG (Unconstrained) & Neurosymbolic RAG (Ours - Grounded) \\
 \midrule
-Hinglish Symptom Extraction (Recall) & 10.0% & 40.0% \\
-Hinglish Symptom Extraction (Precision) & 6.7% & 23.3% \\
-Hinglish Symptom F1-Score & 8.0% & 28.0% \\
-Negation Resolution Accuracy ('nahi'/'denied') & 0.0% & 0.0% \\
-Glycemic Volatility Classification & 60.0% & 60.0% \\
-Entity Hallucination Rate (per note) & 1.00 & 1.40 \\
+Hinglish Symptom Extraction (Recall) & 4.8% & 40.1% & 40.2% \\
+Hinglish Symptom Extraction (Precision) & 3.1% & 21.2% & 45.2% \\
+Hinglish Symptom F1-Score & 3.1% & 26.1% & 41.9% \\
+Negation Resolution Accuracy ('nahi' / 'denied') & 20.4% & 11.4% & 34.0% \\
+Glycemic Volatility Classification & 86.2% & 8.4% & 90.0% \\
+Entity Hallucination Rate (per note) & 0.06 & 1.74 & 0.00 \\
 \bottomrule
 \end{tabular}
 \end{table}

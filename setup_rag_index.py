@@ -8,10 +8,6 @@ from sentence_transformers import SentenceTransformer
 from config import config
 
 def setup_rag_index(kb_dir: Path, index_output_path: Path) -> None:
-    """
-    Loads clinical reference documents, splits them into semantic chunks,
-    generates dense embeddings using MPS (Apple Silicon GPU), and compiles a FAISS index.
-    """
     kb_path = Path(kb_dir)
     index_path = Path(index_output_path)
 

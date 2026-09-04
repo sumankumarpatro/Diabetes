@@ -7,10 +7,6 @@ from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from config import config
 
 def preprocess_diabetes_data(data_path: Path, output_dir: Path) -> None:
-    """
-    Preprocesses the diabetes dataset: cleaning and advanced feature engineering.
-    Preprocesses tabular data and performs patient-stratified train/test splitting.
-    """
     if not data_path.exists():
         logger.error(f"Input data not found: {data_path}")
         return

@@ -28,9 +28,6 @@ class LLMInterface:
             return None
 
     def _parse_json_payload(self, text: str) -> Optional[Dict[str, Any]]:
-        """
-        Cleans markdown, repairs missing commas, single-quotes, and unescaped characters.
-        """
         try:
             cleaned = re.sub(r'```json\s*|```', '', text).strip()
             

@@ -18,15 +18,9 @@ from config import config
 plt.rcParams.update({'figure.dpi': 300})
 
 def clean_feature_names(feature_names):
-    """
-    Cleans the prefixes (like 'num__', 'cat__', 'remainder__') added by 
-    scikit-learn's ColumnTransformer so plots look professional.
-    """
     clean_names = []
     for name in feature_names:
-        # Remove transformer prefixes
         name = re.sub(r'^(num__|cat__|remainder__)', '', name)
-        # Format feature names for plots
         name = name.replace('symptom_', 'Symptom: ')
         name = name.replace('_affirmed', ' (Yes)')
         name = name.replace('_negated', ' (No)')
@@ -148,7 +142,7 @@ if __name__ == "__main__":
 
     if args.all:
         for m in ["baseline", "bert", "llm_enhanced", "hybrid"]:
-            logger.info(f"\n{'='*50}\nGenerating SHAP plots for: [{m.upper()}]\n{'='*50}")
+            logger.info(f"Generating SHAP plots for profile: {m}")
             generate_shap_plots(m)
     else:
         generate_shap_plots(args.mode)

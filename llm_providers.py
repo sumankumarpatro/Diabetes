@@ -25,7 +25,7 @@ class OllamaProvider(LLMProvider):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=6),
-        retry=retry_if_exception_type((RuntimeError, ConnectionError, Exception)),
+        retry=retry_if_exception_type((RuntimeError, ConnectionError, TimeoutError, OSError)),
         reraise=True
     )
     async def generate_structured_json(self, prompt: str, schema: Dict[str, Any]) -> Optional[str]:
@@ -49,14 +49,14 @@ class OllamaProvider(LLMProvider):
                 }
             )
             return response.get('response', '')
-        except (ConnectionError, TimeoutError, RuntimeError) as e:
+        except (ConnectionError, TimeoutError, RuntimeError, OSError) as e:
             logger.warning(f"[OllamaProvider] JSON generation failed ({str(e)[:80]}). Retrying...")
             raise e
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=6),
-        retry=retry_if_exception_type((RuntimeError, ConnectionError, Exception)),
+        retry=retry_if_exception_type((RuntimeError, ConnectionError, TimeoutError, OSError)),
         reraise=True
     )
     async def generate_text(self, prompt: str) -> Optional[str]:
