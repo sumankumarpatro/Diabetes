@@ -431,7 +431,7 @@ This study adheres to established reporting frameworks for machine learning in h
 @article{patro2026neurosymbolic,
   title={A Neurosymbolic Multimodal Framework for 30-Day Diabetic Readmission Prediction: Integrating Structured EHR Data, Dense Clinical Embeddings, and Knowledge-Grounded Symbolic Extraction},
   author={Patro, Una Suman Kumar and Collaborators},
-  journal={Computers in Biology and Medicine},
+  journal={SN Computer Science},
   year={2026}
 }
 ```
